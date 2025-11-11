@@ -1146,7 +1146,7 @@ async function sendAllNotifications() {
         console.log(`[SCHEDULER] Total active dishes (from query): ${allActiveDishes?.length || 0}`);
         if (allActiveDishes && allActiveDishes.length > 0) {
           const expiredCount = allActiveDishes.filter(d => new Date(d.expires_at) <= nowUTCExp).length;
-          console.log(`[SCHEDULER] Dishes that should be expired (МСК): ${expiredCount}`);
+          console.log(`[SCHEDULER] Dishes that should be expired: ${expiredCount}`);
         }
       }
 
