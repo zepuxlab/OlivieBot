@@ -344,7 +344,7 @@ bot.hears('📦 Список блюд', async (ctx) => {
       return;
     }
 
-    // Формируем список блюд с датой и временем (в МСК)
+    // Формируем список блюд с датой и временем (в UTC)
     const dishesList = dishes.map((dish, index) => {
       const expiresDate = new Date(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
@@ -419,7 +419,7 @@ bot.hears('🗑 Списанные блюда', async (ctx) => {
 
     // Формируем список списанных блюд
     const dishesList = dishes.map((dish, index) => {
-      const createdDate = toMoscowTime(dish.created_at);
+      const createdDate = new Date(dish.created_at);
       const day = String(createdDate.getUTCDate()).padStart(2, '0');
       const month = String(createdDate.getUTCMonth() + 1).padStart(2, '0');
       const dateStr = `${day}.${month}`;
@@ -721,9 +721,8 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     userStates.delete(userId);
 
     // Проверяем, не истек ли уже срок (по МСК)
-    const nowMoscow = getMoscowTime();
-    const nowUTC = new Date(nowMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC для сравнения с БД
-    const isExpired = new Date(expiresAt) <= nowUTC;
+    const now = new Date();
+    const isExpired = new Date(expiresAt) <= now;
 
     if (isExpired) {
       // Срок уже истек - сразу отправляем уведомление и обновляем статус
@@ -829,7 +828,7 @@ bot.action(/^remove_/, async (ctx) => {
 
     // Обновляем список блюд
     const dishesList = remainingDishes.map((dish, index) => {
-      const expiresDate = toMoscowTime(dish.expires_at);
+      const expiresDate = new Date(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
       
@@ -881,9 +880,9 @@ async function sendAllNotifications() {
   };
 
   try {
-    const nowMoscow = getMoscowTime();
-    const currentHour = nowMoscow.getUTCHours();
-    const currentMinute = nowMoscow.getUTCMinutes();
+    const now = new Date();
+    const currentHour = now.getUTCHours();
+    const currentMinute = now.getUTCMinutes();
     
     console.log(`[SCHEDULER] ========================================`);
     console.log(`[SCHEDULER] Starting notification check`);
