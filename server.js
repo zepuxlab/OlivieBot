@@ -1036,7 +1036,10 @@ async function sendAllNotifications() {
       const oneHourLaterUTC = new Date(nowUTC1h.getTime() + 60 * 60 * 1000);
       
       console.log(`[SCHEDULER] Querying dishes expiring in 1 hour`);
+      console.log(`[SCHEDULER] Current МСК: ${nowMoscow1h.toISOString()}`);
+      console.log(`[SCHEDULER] Current UTC: ${nowUTC1h.toISOString()}`);
       console.log(`[SCHEDULER] Time range: ${nowUTC1h.toISOString()} to ${oneHourLaterUTC.toISOString()}`);
+      console.log(`[SCHEDULER] Looking for dishes that expire between now and 1 hour from now (in МСК)`);
       
       const { data: dishes, error } = await supabase
         .from('dishes')
@@ -1045,6 +1048,17 @@ async function sendAllNotifications() {
         .eq('notified_one_hour', false)
         .gte('expires_at', nowUTC1h.toISOString())
         .lte('expires_at', oneHourLaterUTC.toISOString());
+      
+      // Дополнительная диагностика: показываем все блюда в этом диапазоне
+      if (!error && dishes) {
+        console.log(`[SCHEDULER] Found ${dishes.length} dishes in 1-hour range`);
+        dishes.forEach(d => {
+          const expiresAt = new Date(d.expires_at);
+          const diffMs = expiresAt - nowUTC1h;
+          const diffMinutes = Math.floor(diffMs / 60000);
+          console.log(`[SCHEDULER]   - "${d.name}": expires_at=${d.expires_at}, diff=${diffMinutes} minutes from now`);
+        });
+      }
 
       if (error) {
         console.error('[SCHEDULER] Error fetching one hour dishes:', error);
@@ -1155,10 +1169,13 @@ async function sendAllNotifications() {
         });
       }
       
+      // ВАЖНО: для истекших блюд НЕ проверяем флаги notified_* - они должны отправляться каждый раз пока не списаны
+      // ВАЖНО: для истекших блюд проверяем И active И expired статусы
+      // Это позволяет отправлять уведомления даже после того, как статус изменился на expired
       const { data: dishes, error } = await supabase
         .from('dishes')
-        .select('id, name, expires_at, chat_id')
-        .eq('status', 'active')
+        .select('id, name, expires_at, chat_id, status')
+        .in('status', ['active', 'expired']) // Проверяем и active, и expired
         .lte('expires_at', nowUTCExp.toISOString());
 
       if (error) {
