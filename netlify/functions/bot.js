@@ -63,6 +63,16 @@ function formatTime(date) {
   return `${hours}:${minutes}`;
 }
 
+// Форматирование даты и времени для отображения
+function formatDateTime(date) {
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${day}.${month} ${hours}:${minutes}`;
+}
+
 // Команда /start
 bot.start((ctx) => {
   ctx.reply('Добро пожаловать! Выберите действие:', getMainMenu());
@@ -306,9 +316,9 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     // Очищаем состояние
     userStates.delete(userId);
 
-    const expiresTime = formatTime(expiresAt);
+    const expiresDateTime = formatDateTime(expiresAt);
     const message = `✅ Блюдо "${dishName}" добавлено!\n` +
-      `Срок хранения: до ${expiresTime} (${formatTimeUntil(expiresAt)})`;
+      `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})`;
     
     // Проверяем, является ли это callback query или обычное сообщение
     if (ctx.callbackQuery) {
