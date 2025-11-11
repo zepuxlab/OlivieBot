@@ -1,0 +1,15 @@
+[build]
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/webhook"
+  to = "/.netlify/functions/bot"
+  status = 200
+
+[[scheduled]]
+  name = "scheduler"
+  cron = "*/15 * * * *"
+

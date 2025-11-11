@@ -1,0 +1,17 @@
+{
+  "name": "oliviebot",
+  "version": "1.0.0",
+  "description": "Telegram bot for tracking food expiration dates",
+  "main": "index.js",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "keywords": ["telegram", "bot", "netlify", "supabase"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "telegraf": "^4.15.0",
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}
+
