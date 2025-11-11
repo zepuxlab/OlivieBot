@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: oliviebot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: WEBHOOK_URL
+        value: https://oliviebot.onrender.com/webhook
+

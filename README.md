@@ -1,13 +1,13 @@
 # OlivieBot - Telegram бот для отслеживания сроков хранения блюд
 
-Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Netlify Servers с использованием polling.
+Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Render.com с использованием webhook.
 
 ## Структура проекта
 
 ```
 OlivieBot/
-├── server.js               # Основной серверный файл (бот + scheduler)
-├── netlify.toml            # Конфигурация Netlify Servers
+├── server.js               # Основной серверный файл (бот + scheduler + webhook)
+├── render.yaml             # Конфигурация Render.com (опционально)
 ├── package.json            # Зависимости проекта
 └── README.md               # Этот файл
 ```
@@ -71,7 +71,7 @@ CREATE INDEX idx_users_name ON users(name);
 2. Отправьте команду `/newbot` и следуйте инструкциям
 3. Сохраните полученный **BOT_TOKEN**
 
-## Деплой на Netlify
+## Деплой на Render.com
 
 ### 1. Подготовка репозитория
 
@@ -83,30 +83,42 @@ git remote add origin <your-repo-url>
 git push -u origin main
 ```
 
-### 2. Деплой через Netlify
+### 2. Деплой через Render
 
-1. Перейдите на [Netlify](https://netlify.com) и войдите в аккаунт
-2. Нажмите "Add new site" → "Import an existing project"
+1. Перейдите на [Render.com](https://render.com) и войдите в аккаунт
+2. Нажмите "New +" → "Web Service"
 3. Подключите ваш Git-репозиторий
-4. Настройки сборки:
-   - **Build command**: оставьте пустым (не требуется)
-   - **Publish directory**: оставьте пустым
+4. Настройки:
+   - **Name**: `oliviebot`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install`
+   - **Start Command**: `node server.js`
+   - **Plan**: Free (или выберите нужный план)
 
 ### 3. Настройка переменных окружения
 
-В Netlify Dashboard → Site settings → Environment variables добавьте:
+В Render Dashboard → Environment → Environment Variables добавьте:
 
 - `BOT_TOKEN` - токен вашего Telegram бота
 - `SUPABASE_URL` - URL вашего Supabase проекта
 - `SUPABASE_KEY` - anon key из Supabase
+- `WEBHOOK_URL` - `https://oliviebot.onrender.com/webhook` (или ваш URL)
 
 ### 4. Проверка работы бота
 
-После деплоя бот автоматически запустится и начнет работать через polling. Webhook не требуется.
+После деплоя бот автоматически:
+- Запустит HTTP сервер
+- Установит webhook на указанный URL
+- Начнет получать обновления от Telegram
 
-Проверить статус бота можно через логи в Netlify Dashboard:
-- Site settings → Functions → Logs
-- Ищите сообщения `[BOT] Bot started successfully`
+Проверить статус бота можно через логи в Render Dashboard:
+- Logs → ищите сообщения `[BOT] ✅ Bot is ready and listening for webhook updates`
+
+### 5. Health Check
+
+Бот имеет health check endpoint: `https://oliviebot.onrender.com/health`
+
+Можно использовать его для мониторинга в Render Dashboard → Settings → Health Check Path: `/health`
 
 ## Локальная разработка
 
@@ -129,16 +141,22 @@ SUPABASE_KEY=your_supabase_anon_key
 ### Запуск локального сервера
 
 ```bash
-npm run dev
-```
-
-Или напрямую:
-
-```bash
 node server.js
 ```
 
-Netlify Dev автоматически запустит сервер локально. Бот будет работать через polling, webhook не требуется.
+Или с переменными окружения:
+
+```bash
+BOT_TOKEN=your_token SUPABASE_URL=your_url SUPABASE_KEY=your_key WEBHOOK_URL=http://localhost:3000/webhook node server.js
+```
+
+Для локальной разработки с webhook используйте [ngrok](https://ngrok.com):
+
+```bash
+ngrok http 3000
+```
+
+Затем установите `WEBHOOK_URL` на ngrok URL (например: `https://your-id.ngrok.io/webhook`)
 
 ## Функциональность бота
 
