@@ -1176,12 +1176,45 @@ async function startBot() {
       console.log(`[SERVER] Health check: http://localhost:${PORT}/health`);
     });
     
+    // Запускаем polling с обработкой ошибок конфликта
     console.log('[BOT] Starting bot with polling...');
-    await bot.launch({
-      dropPendingUpdates: true, // Игнорируем старые обновления
-      allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
-    });
-    console.log('[BOT] ✅ Bot started successfully with polling');
+    let pollingStarted = false;
+    let retryCount = 0;
+    const maxRetries = 5;
+    
+    while (!pollingStarted && retryCount < maxRetries) {
+      try {
+        await bot.launch({
+          dropPendingUpdates: true, // Игнорируем старые обновления
+          allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
+        });
+        pollingStarted = true;
+        console.log('[BOT] ✅ Bot started successfully with polling');
+      } catch (error) {
+        retryCount++;
+        if (error.response && error.response.error_code === 409) {
+          console.error(`[BOT] ❌ Conflict error (attempt ${retryCount}/${maxRetries}): Another instance is running`);
+          if (retryCount < maxRetries) {
+            const waitTime = retryCount * 5; // Увеличиваем задержку с каждой попыткой
+            console.log(`[BOT] Waiting ${waitTime} seconds before retry...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+            
+            // Пытаемся еще раз удалить webhook перед повтором
+            try {
+              await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+              console.log('[BOT] Webhook deleted again before retry');
+            } catch (e) {
+              console.log('[BOT] Could not delete webhook:', e.message);
+            }
+          } else {
+            console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
+            throw error;
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
     
     // Запускаем scheduler сразу при старте
     console.log('[SCHEDULER] Running initial notification check...');
