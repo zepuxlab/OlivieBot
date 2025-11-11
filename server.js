@@ -1109,6 +1109,22 @@ async function sendAllNotifications() {
 
       console.log(`[SCHEDULER] Querying expired dishes`);
       console.log(`[SCHEDULER] Expired before: ${nowUTCExp.toISOString()}`);
+      console.log(`[SCHEDULER] Current MСК time: ${nowMoscowExp.toISOString()}`);
+      
+      // Дополнительная проверка: получаем все активные блюда и проверяем вручную
+      const { data: allDishes, error: allError } = await supabase
+        .from('dishes')
+        .select('id, name, expires_at, chat_id, status')
+        .eq('status', 'active');
+      
+      if (!allError && allDishes) {
+        console.log(`[SCHEDULER] Total active dishes in DB: ${allDishes.length}`);
+        allDishes.forEach(d => {
+          const expiresAt = new Date(d.expires_at);
+          const isExpired = expiresAt <= nowUTCExp;
+          console.log(`[SCHEDULER] Dish "${d.name}": expires_at=${d.expires_at}, isExpired=${isExpired}, chat_id=${d.chat_id}`);
+        });
+      }
       
       const { data: dishes, error } = await supabase
         .from('dishes')
