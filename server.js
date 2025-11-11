@@ -1030,18 +1030,15 @@ async function sendAllNotifications() {
     // 2. Уведомление за 1 час до истечения
     console.log('[SCHEDULER] Checking one hour notifications');
     try {
-      // Используем МСК для сравнения (expires_at в БД хранится в UTC, но сравниваем с МСК)
-      const nowMoscow1h = getMoscowTime();
-      const nowUTC1h = new Date(nowMoscow1h.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
-      const oneHourLaterUTC = new Date(nowUTC1h.getTime() + 60 * 60 * 1000);
+      // ИСПРАВЛЕНИЕ: используем реальное UTC время напрямую
+      const nowUTC1h = new Date(); // Просто реальное текущее UTC
       
-      // ИСПРАВЛЕНИЕ: проверяем блюда, которые истекают РОВНО через 1 час (с допуском ±5 минут)
+      // Проверяем блюда, которые истекают РОВНО через 1 час (с допуском ±5 минут)
       // То есть: expires_at должен быть между (now + 55 минут) и (now + 65 минут)
-      const minTime = new Date(nowUTC1h.getTime() + 55 * 60 * 1000); // 55 минут от сейчас
-      const maxTime = new Date(nowUTC1h.getTime() + 65 * 60 * 1000); // 65 минут от сейчас
+      const minTime = new Date(nowUTC1h.getTime() + 55 * 60000); // 55 минут от сейчас
+      const maxTime = new Date(nowUTC1h.getTime() + 65 * 60000); // 65 минут от сейчас
       
       console.log(`[SCHEDULER] Querying dishes expiring in ~1 hour (55-65 minutes from now)`);
-      console.log(`[SCHEDULER] Current МСК: ${nowMoscow1h.toISOString()}`);
       console.log(`[SCHEDULER] Current UTC: ${nowUTC1h.toISOString()}`);
       console.log(`[SCHEDULER] Time range: ${minTime.toISOString()} to ${maxTime.toISOString()}`);
       
@@ -1103,11 +1100,9 @@ async function sendAllNotifications() {
 
     // 3. Уведомления об истекших блюдах
     console.log('[SCHEDULER] Checking expired dishes');
-    // Используем МСК для сравнения (expires_at в БД хранится в UTC, но сравниваем с МСК)
-    const nowMoscowExp = getMoscowTime();
-    const nowUTCExp = new Date(nowMoscowExp.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
-    console.log('[SCHEDULER] Current time (МСК):', nowMoscowExp.toISOString());
-    console.log('[SCHEDULER] Current time (UTC for DB):', nowUTCExp.toISOString());
+    // ИСПРАВЛЕНИЕ: используем реальное UTC время напрямую
+    const nowUTCExp = new Date(); // Просто реальное текущее UTC
+    console.log('[SCHEDULER] Current time (UTC):', nowUTCExp.toISOString());
     try {
       // Получаем ВСЕ блюда (не только active) для диагностики
       const { data: allDishesDebug, error: allDishesError } = await supabase
@@ -1157,7 +1152,6 @@ async function sendAllNotifications() {
 
       console.log(`[SCHEDULER] Querying expired dishes`);
       console.log(`[SCHEDULER] Expired before: ${nowUTCExp.toISOString()}`);
-      console.log(`[SCHEDULER] Current MСК time: ${nowMoscowExp.toISOString()}`);
       
       // Дополнительная проверка: получаем все активные блюда и проверяем вручную
       const { data: allDishes, error: allDishesError2 } = await supabase
