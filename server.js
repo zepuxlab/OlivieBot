@@ -720,8 +720,7 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     // Очищаем состояние
     userStates.delete(userId);
 
-    // Проверяем, не истек ли уже срок (по МСК)
-    const now = new Date();
+    // Проверяем, не истек ли уже срок (по UTC)
     const isExpired = new Date(expiresAt) <= now;
 
     if (isExpired) {
@@ -886,8 +885,8 @@ async function sendAllNotifications() {
     
     console.log(`[SCHEDULER] ========================================`);
     console.log(`[SCHEDULER] Starting notification check`);
-    console.log(`[SCHEDULER] Current time (МСК): ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
-    console.log(`[SCHEDULER] ISO time: ${nowMoscow.toISOString()}`);
+    console.log(`[SCHEDULER] Current time (UTC): ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
+    console.log(`[SCHEDULER] ISO time: ${now.toISOString()}`);
     console.log(`[SCHEDULER] ========================================`);
 
     // 1. Ежедневное уведомление (проверяем настройки каждого пользователя)
