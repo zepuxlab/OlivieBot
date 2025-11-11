@@ -10,23 +10,42 @@ const supabase = createClient(
 // Состояния пользователей для обработки текстовых вводов
 const userStates = new Map();
 
+// Авторизованные пользователи (chat_id -> user data)
+const authorizedUsers = new Map();
+
+// Получение текущего времени в МСК (UTC+3)
+function getMoscowTime() {
+  const now = new Date();
+  // МСК = UTC+3
+  const moscowOffset = 3 * 60 * 60 * 1000; // 3 часа в миллисекундах
+  const moscowTime = new Date(now.getTime() + moscowOffset);
+  return moscowTime;
+}
+
+// Конвертация UTC времени в МСК для отображения
+function toMoscowTime(date) {
+  const moscowOffset = 3 * 60 * 60 * 1000;
+  return new Date(new Date(date).getTime() + moscowOffset);
+}
+
 // Главное меню
 function getMainMenu() {
   return {
     reply_markup: {
       keyboard: [
         [{ text: '➕ Добавить блюдо' }],
-        [{ text: '📦 Список блюд' }]
+        [{ text: '📦 Список блюд' }, { text: '🗑 Списанные блюда' }],
+        [{ text: '⚙️ Настройки' }]
       ],
       resize_keyboard: true
     }
   };
 }
 
-// Форматирование времени до истечения
+// Форматирование времени до истечения (используем МСК)
 function formatTimeUntil(expiresAt) {
-  const now = new Date();
-  const expires = new Date(expiresAt);
+  const now = getMoscowTime();
+  const expires = toMoscowTime(expiresAt);
   const diffMs = expires - now;
   
   if (diffMs <= 0) {
@@ -55,33 +74,76 @@ function formatTimeUntil(expiresAt) {
   return `через ${parts.join(' ')}`;
 }
 
-// Форматирование времени для отображения
+// Форматирование времени для отображения (в МСК)
 function formatTime(date) {
-  const d = new Date(date);
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const d = toMoscowTime(date);
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;
 }
 
-// Форматирование даты и времени для отображения
+// Форматирование даты и времени для отображения (в МСК)
 function formatDateTime(date) {
-  const d = new Date(date);
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const d = toMoscowTime(date);
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
   return `${day}.${month} ${hours}:${minutes}`;
 }
 
+// Проверка авторизации
+async function checkAuth(ctx) {
+  const chatId = ctx.chat.id;
+  
+  // Проверяем в памяти
+  if (authorizedUsers.has(chatId)) {
+    return true;
+  }
+  
+  // Проверяем в базе данных
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('id, name, chat_id')
+    .eq('chat_id', chatId)
+    .single();
+  
+  if (user && !error) {
+    authorizedUsers.set(chatId, user);
+    return true;
+  }
+  
+  return false;
+}
+
 // Команда /start
-bot.start((ctx) => {
+bot.start(async (ctx) => {
   console.log('[BOT] /start command from user', ctx.from.id);
-  ctx.reply('Добро пожаловать! Выберите действие:', getMainMenu());
+  const chatId = ctx.chat.id;
+  
+  // Проверяем авторизацию
+  const isAuthorized = await checkAuth(ctx);
+  
+  if (!isAuthorized) {
+    userStates.set(ctx.from.id, { action: 'waiting_for_username' });
+    await ctx.reply('Для использования бота необходима авторизация.\nВведите ваше имя:');
+    return;
+  }
+  
+  await ctx.reply('Добро пожаловать! Выберите действие:', getMainMenu());
 });
 
 // Обработка кнопки "Добавить блюдо"
 bot.hears('➕ Добавить блюдо', async (ctx) => {
   console.log('[BOT] Add dish button clicked by user', ctx.from.id);
+  
+  // Проверка авторизации
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
   try {
     const chatId = ctx.chat.id;
     
@@ -199,7 +261,8 @@ bot.action(/^dish_/, async (ctx) => {
 bot.use(async (ctx, next) => {
   if (ctx.message && ctx.message.text) {
     const text = ctx.message.text;
-    if (text === '➕ Добавить блюдо' || text === '📦 Список блюд') {
+    const menuCommands = ['➕ Добавить блюдо', '📦 Список блюд', '🗑 Списанные блюда', '⚙️ Настройки'];
+    if (menuCommands.includes(text)) {
       // Пропускаем эти команды - они обрабатываются через bot.hears
       console.log('[BOT] Menu command in middleware, allowing bot.hears to handle it');
       return next();
@@ -237,15 +300,15 @@ bot.hears('📦 Список блюд', async (ctx) => {
       return;
     }
 
-    // Формируем список блюд с датой и временем
+    // Формируем список блюд с датой и временем (в МСК)
     const dishesList = dishes.map((dish, index) => {
-      const expiresDate = new Date(dish.expires_at);
+      const expiresDate = toMoscowTime(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
       
-      // Форматируем дату
-      const day = String(expiresDate.getDate()).padStart(2, '0');
-      const month = String(expiresDate.getMonth() + 1).padStart(2, '0');
+      // Форматируем дату (в МСК)
+      const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+      const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
       const dateStr = `${day}.${month}`;
       
       return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
@@ -253,9 +316,10 @@ bot.hears('📦 Список блюд', async (ctx) => {
 
     // Создаем кнопки для списания (ограничиваем длину текста кнопки)
     const buttons = dishes.map((dish, index) => {
-      const buttonText = dish.name.length > 20 
-        ? `${index + 1}. ${dish.name.substring(0, 17)}... ❌` 
-        : `${index + 1}. ${dish.name} ❌`;
+      const dishName = dish.name.length > 15 
+        ? `${dish.name.substring(0, 12)}...` 
+        : dish.name;
+      const buttonText = `${index + 1}. ${dishName} ❌ Списать`;
       
       return [{
         text: buttonText,
@@ -279,12 +343,194 @@ bot.hears('📦 Список блюд', async (ctx) => {
   }
 });
 
-// Обработка текстового ввода для нового блюда
-// ВАЖНО: этот обработчик должен быть ПОСЛЕ всех bot.hears
-// Команды меню обрабатываются через bot.hears благодаря middleware выше
+// Обработка кнопки "Списанные блюда"
+bot.hears('🗑 Списанные блюда', async (ctx) => {
+  // Проверка авторизации
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
+  try {
+    const chatId = ctx.chat.id;
+    
+    const { data: dishes, error } = await supabase
+      .from('dishes')
+      .select('id, name, expires_at, status, created_at')
+      .eq('chat_id', chatId)
+      .in('status', ['removed', 'expired'])
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('[BOT] Error fetching removed dishes:', error);
+      throw error;
+    }
+
+    if (!dishes || dishes.length === 0) {
+      await ctx.reply('Нет списанных блюд.', getMainMenu());
+      return;
+    }
+
+    // Формируем список списанных блюд
+    const dishesList = dishes.map((dish, index) => {
+      const createdDate = toMoscowTime(dish.created_at);
+      const day = String(createdDate.getUTCDate()).padStart(2, '0');
+      const month = String(createdDate.getUTCMonth() + 1).padStart(2, '0');
+      const dateStr = `${day}.${month}`;
+      const statusEmoji = dish.status === 'expired' ? '⏰' : '❌';
+      const statusText = dish.status === 'expired' ? 'Истёк' : 'Списано';
+      
+      return `${index + 1}. ${dish.name} ${statusEmoji} ${statusText} (${dateStr})`;
+    }).join('\n');
+
+    const message = `🗑 Списанные блюда:\n\n${dishesList}`;
+    await ctx.reply(message, getMainMenu());
+  } catch (error) {
+    console.error('[BOT] Error fetching removed dishes:', error);
+    await ctx.reply('Произошла ошибка при загрузке списка списанных блюд. Попробуйте позже.');
+  }
+});
+
+// Обработка кнопки "Настройки"
+bot.hears('⚙️ Настройки', async (ctx) => {
+  // Проверка авторизации
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
+  try {
+    const chatId = ctx.chat.id;
+    
+    // Получаем настройки пользователя
+    const { data: settings, error } = await supabase
+      .from('user_settings')
+      .select('morning_notification_time')
+      .eq('chat_id', chatId)
+      .single();
+    
+    const currentTime = settings?.morning_notification_time || '10:00';
+    
+    await ctx.reply(
+      `⚙️ Настройки\n\n` +
+      `Время утреннего уведомления: ${currentTime}\n\n` +
+      `Выберите новое время:`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '08:00', callback_data: 'set_time_08:00' },
+              { text: '09:00', callback_data: 'set_time_09:00' },
+              { text: '10:00', callback_data: 'set_time_10:00' }
+            ],
+            [
+              { text: '11:00', callback_data: 'set_time_11:00' },
+              { text: '12:00', callback_data: 'set_time_12:00' },
+              { text: 'Другое...', callback_data: 'set_time_custom' }
+            ]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    console.error('[BOT] Error loading settings:', error);
+    await ctx.reply('Произошла ошибка при загрузке настроек. Попробуйте позже.');
+  }
+});
+
+// Обработка изменения времени уведомления
+bot.action(/^set_time_/, async (ctx) => {
+  const timeStr = ctx.callbackQuery.data.replace('set_time_', '');
+  const chatId = ctx.chat.id;
+  
+  if (timeStr === 'custom') {
+    userStates.set(ctx.from.id, { action: 'waiting_for_notification_time' });
+    await ctx.editMessageText('Введите время в формате ЧЧ:ММ (например: 09:30):');
+    await ctx.answerCbQuery();
+    return;
+  }
+  
+  try {
+    // Сохраняем настройку
+    const { error } = await supabase
+      .from('user_settings')
+      .upsert({
+        chat_id: chatId,
+        morning_notification_time: timeStr
+      }, {
+        onConflict: 'chat_id'
+      });
+    
+    if (error) throw error;
+    
+    await ctx.editMessageText(`✅ Время утреннего уведомления установлено: ${timeStr}`);
+    await ctx.answerCbQuery();
+  } catch (error) {
+    console.error('[BOT] Error saving settings:', error);
+    await ctx.answerCbQuery('Ошибка при сохранении настроек');
+  }
+});
+
+// Обработка текстового ввода
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const state = userStates.get(userId);
+  const chatId = ctx.chat.id;
+  
+  // Обработка авторизации
+  if (state && state.action === 'waiting_for_username') {
+    const username = ctx.message.text.trim();
+    if (!username || username.length === 0) {
+      await ctx.reply('Имя не может быть пустым. Введите ваше имя:');
+      return;
+    }
+    userStates.set(userId, { action: 'waiting_for_password', username: username });
+    await ctx.reply('Введите пароль (4 цифры):');
+    return;
+  }
+  
+  if (state && state.action === 'waiting_for_password') {
+    const password = ctx.message.text.trim();
+    if (!/^\d{4}$/.test(password)) {
+      await ctx.reply('Пароль должен состоять из 4 цифр. Введите пароль:');
+      return;
+    }
+    
+    try {
+      // Проверяем пользователя в базе
+      const { data: user, error } = await supabase
+        .from('users')
+        .select('id, name, password, chat_id')
+        .eq('name', state.username)
+        .eq('password', password)
+        .single();
+      
+      if (user && !error) {
+        // Обновляем chat_id если нужно
+        if (user.chat_id !== chatId) {
+          await supabase
+            .from('users')
+            .update({ chat_id: chatId })
+            .eq('id', user.id);
+        }
+        
+        authorizedUsers.set(chatId, user);
+        userStates.delete(userId);
+        await ctx.reply(`✅ Авторизация успешна, ${user.name}!`, getMainMenu());
+      } else {
+        await ctx.reply('❌ Неверное имя или пароль. Попробуйте снова.\nВведите ваше имя:');
+        userStates.set(userId, { action: 'waiting_for_username' });
+      }
+    } catch (error) {
+      console.error('[BOT] Auth error:', error);
+      await ctx.reply('Произошла ошибка при авторизации. Попробуйте позже.');
+      userStates.delete(userId);
+    }
+    return;
+  }
   
   // Если нет состояния - не обрабатываем
   if (!state) {
@@ -333,6 +579,32 @@ bot.on('text', async (ctx) => {
 
     // Сохраняем блюдо с указанным временем в минутах
     await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
+  } else if (state.action === 'waiting_for_notification_time') {
+    const timeText = ctx.message.text.trim();
+    if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(timeText)) {
+      await ctx.reply('Неверный формат времени. Введите время в формате ЧЧ:ММ (например: 09:30):');
+      return;
+    }
+    
+    try {
+      const chatId = ctx.chat.id;
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert({
+          chat_id: chatId,
+          morning_notification_time: timeText
+        }, {
+          onConflict: 'chat_id'
+        });
+      
+      if (error) throw error;
+      
+      userStates.delete(userId);
+      await ctx.reply(`✅ Время утреннего уведомления установлено: ${timeText}`, getMainMenu());
+    } catch (error) {
+      console.error('[BOT] Error saving notification time:', error);
+      await ctx.reply('Произошла ошибка при сохранении времени. Попробуйте позже.');
+    }
   }
 });
 

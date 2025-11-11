@@ -22,6 +22,15 @@ OlivieBot/
 Выполните следующие SQL-запросы в Supabase SQL Editor:
 
 ```sql
+-- Таблица пользователей
+CREATE TABLE users (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL CHECK (LENGTH(password) = 4 AND password ~ '^[0-9]+$'),
+  chat_id BIGINT,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 -- Таблица блюд
 CREATE TABLE dishes (
   id BIGSERIAL PRIMARY KEY,
@@ -34,11 +43,21 @@ CREATE TABLE dishes (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed', 'expired'))
 );
 
+-- Таблица настроек пользователей
+CREATE TABLE user_settings (
+  chat_id BIGINT PRIMARY KEY,
+  morning_notification_time TEXT NOT NULL DEFAULT '10:00' CHECK (morning_notification_time ~ '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'),
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
 -- Индексы для оптимизации запросов
 CREATE INDEX idx_dishes_status ON dishes(status);
 CREATE INDEX idx_dishes_expires_at ON dishes(expires_at);
 CREATE INDEX idx_dishes_chat_id ON dishes(chat_id);
 CREATE INDEX idx_dishes_created_at ON dishes(created_at);
+CREATE INDEX idx_users_chat_id ON users(chat_id);
+CREATE INDEX idx_users_name ON users(name);
 ```
 
 ### 2. Получение ключей Supabase
