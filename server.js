@@ -1187,6 +1187,29 @@ async function startBot() {
   try {
     console.log('[BOT] Initializing bot...');
     
+    // Проверяем токен перед началом работы
+    if (!process.env.BOT_TOKEN) {
+      console.error('[BOT] ❌ ERROR: BOT_TOKEN is not set in environment variables!');
+      console.error('[BOT] Please set BOT_TOKEN in Render Dashboard → Environment');
+      process.exit(1);
+    }
+    
+    // Проверяем валидность токена через getMe
+    try {
+      const botInfo = await bot.telegram.getMe();
+      console.log(`[BOT] ✅ Bot token is valid. Bot username: @${botInfo.username}`);
+    } catch (error) {
+      if (error.response && error.response.error_code === 401) {
+        console.error('[BOT] ❌ ERROR: Invalid bot token (401 Unauthorized)');
+        console.error('[BOT] Please check BOT_TOKEN in Render Dashboard → Environment');
+        console.error('[BOT] Make sure the token is correct and saved');
+        process.exit(1);
+      } else {
+        console.error('[BOT] ❌ ERROR: Could not verify bot token:', error.message);
+        process.exit(1);
+      }
+    }
+    
     // Агрессивное удаление webhook - больше попыток и задержек
     console.log('[BOT] Starting aggressive webhook removal...');
     let webhookDeleted = false;
@@ -1197,7 +1220,14 @@ async function startBot() {
         console.log('[BOT] Webhook deleted successfully:', result);
         webhookDeleted = true;
         await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды после удаления
+        break; // Выходим из цикла при успехе
       } catch (error) {
+        if (error.response && error.response.error_code === 401) {
+          console.error(`[BOT] ❌ ERROR: Invalid bot token (401 Unauthorized) on attempt ${i + 1}/5`);
+          console.error('[BOT] Please check BOT_TOKEN in Render Dashboard → Environment');
+          console.error('[BOT] Make sure the token is correct and saved');
+          process.exit(1);
+        }
         console.log(`[BOT] Error deleting webhook (attempt ${i + 1}/5):`, error.message);
         if (i < 4) {
           await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды перед повтором
