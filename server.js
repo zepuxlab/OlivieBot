@@ -346,11 +346,11 @@ bot.hears('📦 Список блюд', async (ctx) => {
 
     // Формируем список блюд с датой и временем (в МСК)
     const dishesList = dishes.map((dish, index) => {
-      const expiresDate = toMoscowTime(dish.expires_at);
+      const expiresDate = new Date(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
       
-          // Форматируем дату (в UTC)
+      // Форматируем дату (в UTC)
       const day = String(expiresDate.getUTCDate()).padStart(2, '0');
       const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
       const dateStr = `${day}.${month}`;
