@@ -1101,54 +1101,55 @@ async function sendAllNotifications() {
       } else {
         console.log(`[SCHEDULER] Found ${dishes?.length || 0} expired dishes`);
         if (dishes && dishes.length > 0) {
-        dishes.forEach(d => {
-          console.log(`[SCHEDULER] Expired dish: ${d.name}, expires_at: ${d.expires_at}, chat_id: ${d.chat_id}`);
-        });
-        
-        const dishesByChat = {};
-        for (const dish of dishes) {
-          if (!dish.chat_id) {
-            console.warn(`[SCHEDULER] Dish ${dish.id} (${dish.name}) has no chat_id`);
-            continue;
-          }
-          if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
-          dishesByChat[dish.chat_id].push(dish);
-        }
-
-        console.log(`[SCHEDULER] Sending expired notifications to ${Object.keys(dishesByChat).length} users`);
-        console.log(`[SCHEDULER] Chat IDs:`, Object.keys(dishesByChat));
-
-        for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-          try {
-            const messages = userDishes.map(d => 
-              `❌ Срок истёк: ${d.name || 'Неизвестное блюдо'}. Требуется списание.`
-            );
-            const messageText = messages.join('\n');
-            console.log(`[SCHEDULER] Attempting to send to chat ${chatId}:`, messageText);
-            
-            await bot.telegram.sendMessage(chatId, messageText);
-            console.log(`[SCHEDULER] ✅ Expired notification sent to ${chatId} for ${userDishes.length} dishes`);
-            results.expired.sent++;
-            
-            const dishIds = userDishes.map(d => d.id);
-            const { error: updateError } = await supabase
-              .from('dishes')
-              .update({ status: 'expired' })
-              .in('id', dishIds);
-            
-            if (updateError) {
-              console.error(`[SCHEDULER] Error updating expired dishes:`, updateError);
-            } else {
-              console.log(`[SCHEDULER] Updated ${dishIds.length} dishes to expired status`);
+          dishes.forEach(d => {
+            console.log(`[SCHEDULER] Expired dish: ${d.name}, expires_at: ${d.expires_at}, chat_id: ${d.chat_id}`);
+          });
+          
+          const dishesByChat = {};
+          for (const dish of dishes) {
+            if (!dish.chat_id) {
+              console.warn(`[SCHEDULER] Dish ${dish.id} (${dish.name}) has no chat_id`);
+              continue;
             }
-          } catch (err) {
-            console.error(`[SCHEDULER] ❌ Error sending expired notification to ${chatId}:`, err.message);
-            console.error(`[SCHEDULER] Error details:`, err);
-            results.expired.errors++;
+            if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+            dishesByChat[dish.chat_id].push(dish);
           }
+
+          console.log(`[SCHEDULER] Sending expired notifications to ${Object.keys(dishesByChat).length} users`);
+          console.log(`[SCHEDULER] Chat IDs:`, Object.keys(dishesByChat));
+
+          for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+            try {
+              const messages = userDishes.map(d => 
+                `❌ Срок истёк: ${d.name || 'Неизвестное блюдо'}. Требуется списание.`
+              );
+              const messageText = messages.join('\n');
+              console.log(`[SCHEDULER] Attempting to send to chat ${chatId}:`, messageText);
+              
+              await bot.telegram.sendMessage(chatId, messageText);
+              console.log(`[SCHEDULER] ✅ Expired notification sent to ${chatId} for ${userDishes.length} dishes`);
+              results.expired.sent++;
+              
+              const dishIds = userDishes.map(d => d.id);
+              const { error: updateError } = await supabase
+                .from('dishes')
+                .update({ status: 'expired' })
+                .in('id', dishIds);
+              
+              if (updateError) {
+                console.error(`[SCHEDULER] Error updating expired dishes:`, updateError);
+              } else {
+                console.log(`[SCHEDULER] Updated ${dishIds.length} dishes to expired status`);
+              }
+            } catch (err) {
+              console.error(`[SCHEDULER] ❌ Error sending expired notification to ${chatId}:`, err.message);
+              console.error(`[SCHEDULER] Error details:`, err);
+              results.expired.errors++;
+            }
+          }
+        } else {
+          console.log('[SCHEDULER] No expired dishes found (status=active AND expires_at <= now)');
         }
-      } else {
-        console.log('[SCHEDULER] No expired dishes found (status=active AND expires_at <= now)');
       }
     } catch (err) {
       console.error('[SCHEDULER] Error in expired dishes check:', err);
