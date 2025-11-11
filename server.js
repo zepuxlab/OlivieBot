@@ -1071,7 +1071,9 @@ const http = require('http');
 
 const server = http.createServer(async (req, res) => {
   // Обработка webhook от Telegram
-  if (req.method === 'POST' && req.url === '/webhook') {
+  // Netlify Servers автоматически проксирует запросы, поэтому проверяем путь
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === 'POST' && (url.pathname === '/webhook' || url.pathname === '/.netlify/server')) {
     let body = '';
     
     req.on('data', chunk => {
