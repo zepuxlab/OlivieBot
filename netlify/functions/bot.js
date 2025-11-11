@@ -195,70 +195,8 @@ bot.action(/^dish_/, async (ctx) => {
   }
 });
 
-// Обработка текстового ввода для нового блюда
-// ВАЖНО: этот обработчик должен быть ПОСЛЕ всех bot.hears
-bot.on('text', async (ctx) => {
-  const userId = ctx.from.id;
-  const state = userStates.get(userId);
-  
-  // Если нет состояния и это не команда из меню - игнорируем
-  if (!state) {
-    // Проверяем, не является ли это командой из главного меню
-    const text = ctx.message.text;
-    if (text === '➕ Добавить блюдо' || text === '📦 Список блюд') {
-      console.log('[BOT] Menu command in bot.on(text), should be handled by bot.hears');
-      return;
-    }
-    return; // Если нет состояния, не обрабатываем
-  }
-
-  if (state.action === 'waiting_for_dish_name') {
-    const dishName = ctx.message.text.trim();
-    
-    if (!dishName || dishName.length === 0) {
-      await ctx.reply('Название не может быть пустым. Введите название блюда:');
-      return;
-    }
-
-    // Переходим к выбору срока
-    userStates.set(userId, { 
-      action: 'selecting_duration', 
-      dish_name: dishName
-    });
-
-    await ctx.reply('Выберите срок хранения:', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '12 ч', callback_data: 'duration_12' },
-            { text: '24 ч', callback_data: 'duration_24' }
-          ],
-          [
-            { text: '48 ч', callback_data: 'duration_48' },
-            { text: '72 ч', callback_data: 'duration_72' }
-          ],
-          [
-            { text: 'Другое время...', callback_data: 'duration_custom' }
-          ]
-        ]
-      }
-    });
-  } else if (state.action === 'waiting_for_custom_minutes') {
-    const minutesText = ctx.message.text.trim();
-    const minutes = parseInt(minutesText);
-    
-    if (isNaN(minutes) || minutes <= 0) {
-      await ctx.reply('Пожалуйста, введите положительное число минут (например: 30, 90, 120):');
-      return;
-    }
-
-    // Сохраняем блюдо с указанным временем в минутах
-    await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
-  }
-});
-
 // Обработка кнопки "Список блюд"
-// ВАЖНО: должен быть зарегистрирован ДО bot.on('text')
+// КРИТИЧЕСКИ ВАЖНО: должен быть зарегистрирован ДО bot.on('text')
 bot.hears('📦 Список блюд', async (ctx) => {
   try {
     console.log('[BOT] ===== List dishes button clicked =====');
@@ -325,6 +263,69 @@ bot.hears('📦 Список блюд', async (ctx) => {
     console.error('[BOT] Error fetching dishes:', error);
     console.error('[BOT] Error stack:', error.stack);
     await ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
+  }
+});
+
+// Обработка текстового ввода для нового блюда
+// ВАЖНО: этот обработчик должен быть ПОСЛЕ всех bot.hears
+bot.on('text', async (ctx) => {
+  // Пропускаем команды из главного меню - они обрабатываются через bot.hears
+  const text = ctx.message?.text;
+  if (text === '➕ Добавить блюдо' || text === '📦 Список блюд') {
+    console.log('[BOT] Menu command in bot.on(text), should be handled by bot.hears - skipping');
+    return; // Просто возвращаемся, не обрабатываем
+  }
+  
+  const userId = ctx.from.id;
+  const state = userStates.get(userId);
+  
+  // Если нет состояния - не обрабатываем
+  if (!state) {
+    return;
+  }
+
+  if (state.action === 'waiting_for_dish_name') {
+    const dishName = ctx.message.text.trim();
+    
+    if (!dishName || dishName.length === 0) {
+      await ctx.reply('Название не может быть пустым. Введите название блюда:');
+      return;
+    }
+
+    // Переходим к выбору срока
+    userStates.set(userId, { 
+      action: 'selecting_duration', 
+      dish_name: dishName
+    });
+
+    await ctx.reply('Выберите срок хранения:', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '12 ч', callback_data: 'duration_12' },
+            { text: '24 ч', callback_data: 'duration_24' }
+          ],
+          [
+            { text: '48 ч', callback_data: 'duration_48' },
+            { text: '72 ч', callback_data: 'duration_72' }
+          ],
+          [
+            { text: 'Другое время...', callback_data: 'duration_custom' }
+          ]
+        ]
+      }
+    });
+  } else if (state.action === 'waiting_for_custom_minutes') {
+    const minutesText = ctx.message.text.trim();
+    const minutes = parseInt(minutesText);
+    
+    if (isNaN(minutes) || minutes <= 0) {
+      await ctx.reply('Пожалуйста, введите положительное число минут (например: 30, 90, 120):');
+      return;
+    }
+
+    // Сохраняем блюдо с указанным временем в минутах
+    await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
   }
 });
 
