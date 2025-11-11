@@ -1345,34 +1345,6 @@ async function startBot() {
       }
     }
     
-    // Удаляем webhook - просто и без лишних задержек
-    console.log('[BOT] Deleting webhook...');
-    try {
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      console.log('[BOT] ✅ Webhook deleted');
-    } catch (error) {
-      if (error.response && error.response.error_code === 401) {
-        console.error('[BOT] ❌ ERROR: Invalid bot token (401 Unauthorized)');
-        console.error('[BOT] Please check BOT_TOKEN in Render Dashboard → Environment');
-        process.exit(1);
-      }
-      console.log('[BOT] Error deleting webhook:', error.message);
-    }
-    
-    // Проверяем webhook один раз
-    try {
-      const webhookInfo = await bot.telegram.getWebhookInfo();
-      if (webhookInfo.url && webhookInfo.url !== '') {
-        console.log('[BOT] ⚠️ WARNING: Webhook still exists:', webhookInfo.url);
-        // Пытаемся удалить еще раз
-        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      } else {
-        console.log('[BOT] ✅ Webhook confirmed deleted');
-      }
-    } catch (error) {
-      console.log('[BOT] Could not check webhook info:', error.message);
-    }
-    
     // Запускаем HTTP сервер для health check
     server.listen(PORT, () => {
       console.log(`[SERVER] Health check server started on port ${PORT}`);
@@ -1404,16 +1376,6 @@ async function startBot() {
             const waitTime = retryCount * 10; // Увеличиваем задержку: 10, 20, 30, 40, 50 секунд
             console.log(`[BOT] Waiting ${waitTime} seconds before retry...`);
             await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-            
-            // Пытаемся еще раз удалить webhook перед повтором
-            try {
-              await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-              console.log('[BOT] Webhook deleted again before retry');
-              // Дополнительная задержка после удаления webhook
-              await new Promise(resolve => setTimeout(resolve, 5000));
-            } catch (e) {
-              console.log('[BOT] Could not delete webhook:', e.message);
-            }
           } else {
             console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
             console.error('[BOT] ============================================');
@@ -1435,7 +1397,7 @@ async function startBot() {
             console.error('[BOT] This instance will continue running scheduler only.');
             
             // Запускаем scheduler даже если polling не запустился
-            console.log('[SCHEDULER] Starting scheduler anyway (bot may work via webhook or another instance)...');
+            console.log('[SCHEDULER] Starting scheduler anyway (another instance may be running)...');
             startScheduler();
             
             // Не завершаем процесс - scheduler будет работать
