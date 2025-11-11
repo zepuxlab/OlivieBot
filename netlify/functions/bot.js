@@ -195,6 +195,19 @@ bot.action(/^dish_/, async (ctx) => {
   }
 });
 
+// Middleware для пропуска команд меню - должен быть ПЕРЕД bot.on('text')
+bot.use(async (ctx, next) => {
+  if (ctx.message && ctx.message.text) {
+    const text = ctx.message.text;
+    if (text === '➕ Добавить блюдо' || text === '📦 Список блюд') {
+      // Пропускаем эти команды - они обрабатываются через bot.hears
+      console.log('[BOT] Menu command in middleware, allowing bot.hears to handle it');
+      return next();
+    }
+  }
+  return next();
+});
+
 // Обработка кнопки "Список блюд"
 // КРИТИЧЕСКИ ВАЖНО: должен быть зарегистрирован ДО bot.on('text')
 bot.hears('📦 Список блюд', async (ctx) => {
