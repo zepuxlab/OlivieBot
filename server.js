@@ -1108,88 +1108,47 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000); // 15 минут
 
-// HTTP сервер для webhook (Render)
-const http = require('http');
-
-const server = http.createServer(async (req, res) => {
-  // Обработка webhook от Telegram
-  if (req.method === 'POST' && req.url === '/webhook') {
-    let body = '';
-    
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-    
-    req.on('end', async () => {
-      try {
-        const update = JSON.parse(body);
-        console.log('[BOT] Webhook update received:', update.update_id);
-        await bot.handleUpdate(update);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (error) {
-        console.error('[BOT] Webhook error:', error);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: error.message }));
-      }
-    });
-  } else if (req.method === 'GET' && req.url === '/health') {
-    // Health check endpoint для Render
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'oliviebot' }));
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-});
-
-// Запуск сервера
-const PORT = process.env.PORT || 3000;
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://oliviebot.onrender.com/webhook';
-
-async function startServer() {
+// Запуск бота через polling
+async function startBot() {
   try {
-    console.log('[BOT] Initializing bot for Render...');
+    console.log('[BOT] Initializing bot...');
     
-    // Удаляем старый webhook если был
+    // Удаляем webhook если был установлен (для чистоты)
     try {
-      console.log('[BOT] Attempting to delete old webhook...');
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      console.log('[BOT] Old webhook deleted');
+      console.log('[BOT] Attempting to delete webhook...');
+      const result = await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      console.log('[BOT] Webhook deleted successfully:', result);
     } catch (error) {
-      console.log('[BOT] No old webhook to delete:', error.message);
+      console.log('[BOT] Error deleting webhook (may not exist):', error.message);
+      // Продолжаем даже если не удалось удалить webhook
     }
     
-    // Запускаем HTTP сервер
-    server.listen(PORT, () => {
-      console.log(`[SERVER] HTTP server started on port ${PORT}`);
-      console.log(`[SERVER] Webhook URL: ${WEBHOOK_URL}`);
-    });
-    
-    // Устанавливаем webhook
+    // Проверяем текущий webhook
     try {
-      console.log('[BOT] Setting webhook...');
-      const result = await bot.telegram.setWebhook(WEBHOOK_URL, {
-        drop_pending_updates: true,
-        allowed_updates: ['message', 'callback_query']
-      });
-      console.log('[BOT] Webhook set successfully:', result);
-      
-      // Проверяем webhook
       const webhookInfo = await bot.telegram.getWebhookInfo();
-      console.log('[BOT] Webhook info:', JSON.stringify(webhookInfo, null, 2));
+      console.log('[BOT] Current webhook info:', JSON.stringify(webhookInfo, null, 2));
+      if (webhookInfo.url) {
+        console.log('[BOT] WARNING: Webhook still exists, trying to delete again...');
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      }
     } catch (error) {
-      console.error('[BOT] Error setting webhook:', error);
-      throw error;
+      console.log('[BOT] Could not check webhook info:', error.message);
     }
+    
+    console.log('[BOT] Starting bot with polling...');
+    await bot.launch({
+      dropPendingUpdates: true, // Игнорируем старые обновления
+      allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
+    });
+    console.log('[BOT] ✅ Bot started successfully with polling');
     
     // Запускаем scheduler сразу при старте
     console.log('[SCHEDULER] Running initial notification check...');
     await sendAllNotifications();
     
-    console.log('[BOT] ✅ Bot is ready and listening for webhook updates');
+    console.log('[BOT] Bot is ready and polling for updates');
   } catch (error) {
-    console.error('[BOT] ❌ Error starting server:', error);
+    console.error('[BOT] ❌ Error starting bot:', error);
     console.error('[BOT] Error stack:', error.stack);
     process.exit(1);
   }
@@ -1197,17 +1156,17 @@ async function startServer() {
 
 // Graceful shutdown
 process.once('SIGINT', () => {
-  console.log('[SERVER] Shutting down...');
-  server.close();
+  console.log('[BOT] Shutting down...');
+  bot.stop('SIGINT');
   process.exit(0);
 });
 
 process.once('SIGTERM', () => {
-  console.log('[SERVER] Shutting down...');
-  server.close();
+  console.log('[BOT] Shutting down...');
+  bot.stop('SIGTERM');
   process.exit(0);
 });
 
-// Запускаем сервер
-startServer();
+// Запускаем бота
+startBot();
 

@@ -1,12 +1,12 @@
 # OlivieBot - Telegram бот для отслеживания сроков хранения блюд
 
-Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Render.com с использованием webhook.
+Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Render.com с использованием polling.
 
 ## Структура проекта
 
 ```
 OlivieBot/
-├── server.js               # Основной серверный файл (бот + scheduler + webhook)
+├── server.js               # Основной серверный файл (бот + scheduler)
 ├── render.yaml             # Конфигурация Render.com (опционально)
 ├── package.json            # Зависимости проекта
 └── README.md               # Этот файл
@@ -102,23 +102,16 @@ git push -u origin main
 - `BOT_TOKEN` - токен вашего Telegram бота
 - `SUPABASE_URL` - URL вашего Supabase проекта
 - `SUPABASE_KEY` - anon key из Supabase
-- `WEBHOOK_URL` - `https://oliviebot.onrender.com/webhook` (или ваш URL)
 
 ### 4. Проверка работы бота
 
 После деплоя бот автоматически:
-- Запустит HTTP сервер
-- Установит webhook на указанный URL
+- Удалит старый webhook (если был)
+- Запустится через polling
 - Начнет получать обновления от Telegram
 
 Проверить статус бота можно через логи в Render Dashboard:
-- Logs → ищите сообщения `[BOT] ✅ Bot is ready and listening for webhook updates`
-
-### 5. Health Check
-
-Бот имеет health check endpoint: `https://oliviebot.onrender.com/health`
-
-Можно использовать его для мониторинга в Render Dashboard → Settings → Health Check Path: `/health`
+- Logs → ищите сообщения `[BOT] ✅ Bot started successfully with polling`
 
 ## Локальная разработка
 
@@ -147,16 +140,10 @@ node server.js
 Или с переменными окружения:
 
 ```bash
-BOT_TOKEN=your_token SUPABASE_URL=your_url SUPABASE_KEY=your_key WEBHOOK_URL=http://localhost:3000/webhook node server.js
+BOT_TOKEN=your_token SUPABASE_URL=your_url SUPABASE_KEY=your_key node server.js
 ```
 
-Для локальной разработки с webhook используйте [ngrok](https://ngrok.com):
-
-```bash
-ngrok http 3000
-```
-
-Затем установите `WEBHOOK_URL` на ngrok URL (например: `https://your-id.ngrok.io/webhook`)
+Бот будет работать через polling, webhook не требуется.
 
 ## Функциональность бота
 
