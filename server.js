@@ -1160,12 +1160,12 @@ async function sendAllNotifications() {
       console.log(`[SCHEDULER] Current MСК time: ${nowMoscowExp.toISOString()}`);
       
       // Дополнительная проверка: получаем все активные блюда и проверяем вручную
-      const { data: allDishes, error: allError } = await supabase
+      const { data: allDishes, error: allDishesError2 } = await supabase
         .from('dishes')
         .select('id, name, expires_at, chat_id, status')
         .eq('status', 'active');
       
-      if (!allError && allDishes) {
+      if (!allDishesError2 && allDishes) {
         console.log(`[SCHEDULER] Total active dishes in DB: ${allDishes.length}`);
         allDishes.forEach(d => {
           const expiresAt = new Date(d.expires_at);
