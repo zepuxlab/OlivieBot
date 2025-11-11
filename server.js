@@ -1035,28 +1035,33 @@ async function sendAllNotifications() {
       const nowUTC1h = new Date(nowMoscow1h.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
       const oneHourLaterUTC = new Date(nowUTC1h.getTime() + 60 * 60 * 1000);
       
-      console.log(`[SCHEDULER] Querying dishes expiring in 1 hour`);
+      // ИСПРАВЛЕНИЕ: проверяем блюда, которые истекают РОВНО через 1 час (с допуском ±5 минут)
+      // То есть: expires_at должен быть между (now + 55 минут) и (now + 65 минут)
+      const minTime = new Date(nowUTC1h.getTime() + 55 * 60 * 1000); // 55 минут от сейчас
+      const maxTime = new Date(nowUTC1h.getTime() + 65 * 60 * 1000); // 65 минут от сейчас
+      
+      console.log(`[SCHEDULER] Querying dishes expiring in ~1 hour (55-65 minutes from now)`);
       console.log(`[SCHEDULER] Current МСК: ${nowMoscow1h.toISOString()}`);
       console.log(`[SCHEDULER] Current UTC: ${nowUTC1h.toISOString()}`);
-      console.log(`[SCHEDULER] Time range: ${nowUTC1h.toISOString()} to ${oneHourLaterUTC.toISOString()}`);
-      console.log(`[SCHEDULER] Looking for dishes that expire between now and 1 hour from now (in МСК)`);
+      console.log(`[SCHEDULER] Time range: ${minTime.toISOString()} to ${maxTime.toISOString()}`);
       
       const { data: dishes, error } = await supabase
         .from('dishes')
         .select('id, name, expires_at, chat_id')
         .eq('status', 'active')
         .eq('notified_one_hour', false)
-        .gte('expires_at', nowUTC1h.toISOString())
-        .lte('expires_at', oneHourLaterUTC.toISOString());
+        .gte('expires_at', minTime.toISOString())
+        .lte('expires_at', maxTime.toISOString());
       
       // Дополнительная диагностика: показываем все блюда в этом диапазоне
       if (!error && dishes) {
-        console.log(`[SCHEDULER] Found ${dishes.length} dishes in 1-hour range`);
+        console.log(`[SCHEDULER] Found ${dishes.length} dishes in 1-hour range (55-65 minutes)`);
         dishes.forEach(d => {
           const expiresAt = new Date(d.expires_at);
           const diffMs = expiresAt - nowUTC1h;
           const diffMinutes = Math.floor(diffMs / 60000);
-          console.log(`[SCHEDULER]   - "${d.name}": expires_at=${d.expires_at}, diff=${diffMinutes} minutes from now`);
+          const diffHours = (diffMinutes / 60).toFixed(1);
+          console.log(`[SCHEDULER]   - "${d.name}": expires_at=${d.expires_at}, diff=${diffMinutes} minutes (${diffHours} hours) from now`);
         });
       }
 
@@ -1275,21 +1280,21 @@ function startScheduler() {
     console.error('[SCHEDULER] Error stack:', error.stack);
   });
   
-  // Затем каждые 15 минут
+  // Затем каждую минуту
   schedulerInterval = setInterval(async () => {
     try {
       console.log('[SCHEDULER] ========================================');
-      console.log('[SCHEDULER] Scheduled run triggered (every 15 minutes)');
+      console.log('[SCHEDULER] Scheduled run triggered (every 1 minute)');
       console.log('[SCHEDULER] ========================================');
       await sendAllNotifications();
     } catch (error) {
       console.error('[SCHEDULER] Interval error:', error);
       console.error('[SCHEDULER] Error stack:', error.stack);
     }
-  }, 15 * 60 * 1000); // 15 минут
+  }, 60 * 1000); // 1 минута
   
   console.log('[SCHEDULER] ✅ Scheduler started successfully');
-  console.log('[SCHEDULER] Will run every 15 minutes');
+  console.log('[SCHEDULER] Will run every 1 minute');
   console.log('[SCHEDULER] ========================================');
 }
 
