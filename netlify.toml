@@ -11,5 +11,5 @@
 
 [[scheduled]]
   name = "scheduler"
-  cron = "*/15 * * * *"
+  cron = "* * * * *"
 
