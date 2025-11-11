@@ -1187,48 +1187,49 @@ async function startBot() {
   try {
     console.log('[BOT] Initializing bot...');
     
-    // Удаляем webhook если был установлен (для чистоты)
+    // Агрессивное удаление webhook - больше попыток и задержек
+    console.log('[BOT] Starting aggressive webhook removal...');
     let webhookDeleted = false;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       try {
-        console.log(`[BOT] Attempting to delete webhook (attempt ${i + 1}/3)...`);
+        console.log(`[BOT] Attempting to delete webhook (attempt ${i + 1}/5)...`);
         const result = await bot.telegram.deleteWebhook({ drop_pending_updates: true });
         console.log('[BOT] Webhook deleted successfully:', result);
         webhookDeleted = true;
-        break;
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды после удаления
       } catch (error) {
-        console.log(`[BOT] Error deleting webhook (attempt ${i + 1}/3):`, error.message);
-        if (i < 2) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Ждем 2 секунды перед повтором
+        console.log(`[BOT] Error deleting webhook (attempt ${i + 1}/5):`, error.message);
+        if (i < 4) {
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем 3 секунды перед повтором
         }
       }
     }
-    
-    // Проверяем текущий webhook несколько раз
-    for (let i = 0; i < 5; i++) {
+
+    // Проверяем текущий webhook несколько раз с более длинными задержками
+    for (let i = 0; i < 7; i++) {
       try {
         const webhookInfo = await bot.telegram.getWebhookInfo();
-        console.log(`[BOT] Webhook check ${i + 1}/5:`, JSON.stringify(webhookInfo, null, 2));
-        
+        console.log(`[BOT] Webhook check ${i + 1}/7:`, JSON.stringify(webhookInfo, null, 2));
+
         if (webhookInfo.url && webhookInfo.url !== '') {
           console.log('[BOT] WARNING: Webhook still exists, deleting again...');
           await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Ждем 2 секунды
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Увеличена задержка до 5 секунд
         } else {
           console.log('[BOT] ✅ Webhook confirmed deleted');
           break;
         }
       } catch (error) {
-        console.log(`[BOT] Could not check webhook info (attempt ${i + 1}/5):`, error.message);
-        if (i < 4) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log(`[BOT] Could not check webhook info (attempt ${i + 1}/7):`, error.message);
+        if (i < 6) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
       }
     }
     
     // Дополнительная задержка перед запуском polling (увеличена для Render)
-    console.log('[BOT] Waiting 10 seconds before starting polling to ensure webhook is fully removed...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    console.log('[BOT] Waiting 15 seconds before starting polling to ensure webhook is fully removed...');
+    await new Promise(resolve => setTimeout(resolve, 15000));
     
     // Запускаем HTTP сервер для health check
     server.listen(PORT, () => {
@@ -1271,10 +1272,15 @@ async function startBot() {
           } else {
             console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
             console.error('[BOT] Check Render Dashboard - make sure only ONE service is running');
+            console.error('[BOT] Another bot instance is using polling. This instance will continue running scheduler only.');
+            
             // Запускаем scheduler даже если polling не запустился
-            console.log('[SCHEDULER] Starting scheduler anyway (bot may work via webhook)...');
+            console.log('[SCHEDULER] Starting scheduler anyway (bot may work via webhook or another instance)...');
             startScheduler();
-            throw error;
+            
+            // Не завершаем процесс - scheduler будет работать
+            console.log('[BOT] ⚠️ Bot polling failed, but scheduler is running. Check other instances.');
+            return; // Выходим из функции, но процесс продолжает работать
           }
         } else {
           throw error;
@@ -1290,7 +1296,21 @@ async function startBot() {
   } catch (error) {
     console.error('[BOT] ❌ Error starting bot:', error);
     console.error('[BOT] Error stack:', error.stack);
-    process.exit(1);
+    
+    // Если это не ошибка 409, запускаем scheduler и завершаем процесс
+    if (!error.response || error.response.error_code !== 409) {
+      console.log('[SCHEDULER] Starting scheduler before exit...');
+      startScheduler();
+      // Даем scheduler время запуститься
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      process.exit(1);
+    } else {
+      // Для ошибки 409 - продолжаем работу со scheduler
+      console.log('[SCHEDULER] Starting scheduler (409 error - another instance running)...');
+      startScheduler();
+      console.log('[BOT] ⚠️ Bot polling failed due to conflict, but scheduler is running.');
+      // Не завершаем процесс - scheduler будет работать
+    }
   }
 }
 
