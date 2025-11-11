@@ -889,12 +889,17 @@ async function sendAllNotifications() {
       if (usersError) {
         console.error('[SCHEDULER] Error fetching user settings:', usersError);
       } else {
+        console.log(`[SCHEDULER] Found ${allUsers?.length || 0} users with settings`);
         // Проверяем каждого пользователя
         for (const userSetting of allUsers || []) {
           const [settingHour, settingMinute] = (userSetting.morning_notification_time || '10:00').split(':').map(Number);
+          console.log(`[SCHEDULER] Checking user ${userSetting.chat_id}: setting time ${settingHour}:${String(settingMinute).padStart(2, '0')}, current ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
           
           // Проверяем, наступило ли время уведомления для этого пользователя (в пределах 15 минут)
-          if (currentHour === settingHour && currentMinute >= settingMinute && currentMinute < settingMinute + 15) {
+          const isTimeMatch = currentHour === settingHour && currentMinute >= settingMinute && currentMinute < settingMinute + 15;
+          console.log(`[SCHEDULER] Time match: ${isTimeMatch} (current: ${currentHour}:${String(currentMinute).padStart(2, '0')}, setting: ${settingHour}:${String(settingMinute).padStart(2, '0')})`);
+          
+          if (isTimeMatch) {
             console.log(`[SCHEDULER] Sending daily notification to ${userSetting.chat_id} at ${userSetting.morning_notification_time}`);
             
             // Сегодня в МСК - конвертируем в UTC для сравнения с БД
@@ -902,6 +907,9 @@ async function sendAllNotifications() {
             const todayStartUTC = new Date(todayStartMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC
             const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
 
+            console.log(`[SCHEDULER] Querying dishes for chat ${userSetting.chat_id}`);
+            console.log(`[SCHEDULER] Date range: ${todayStartUTC.toISOString()} to ${todayEndUTC.toISOString()}`);
+            
             const { data: dishes, error } = await supabase
               .from('dishes')
               .select('id, name, expires_at, chat_id')
@@ -914,8 +922,9 @@ async function sendAllNotifications() {
             if (error) {
               console.error(`[SCHEDULER] Error fetching daily dishes for ${userSetting.chat_id}:`, error);
               results.daily.errors++;
-            } else if (dishes && dishes.length > 0) {
-              console.log(`[SCHEDULER] Found ${dishes.length} dishes expiring today for ${userSetting.chat_id}`);
+            } else {
+              console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring today for ${userSetting.chat_id}`);
+              if (dishes && dishes.length > 0) {
               
               try {
                 const messages = dishes.map(d => 
@@ -938,7 +947,10 @@ async function sendAllNotifications() {
       
       // Если нет настроек, используем дефолтное время 10:00
       if (!allUsers || allUsers.length === 0) {
-        if (currentHour === 10 && currentMinute < 15) {
+        console.log('[SCHEDULER] No user settings found, using default 10:00');
+        const isDefaultTime = currentHour === 10 && currentMinute < 15;
+        console.log(`[SCHEDULER] Default time check: ${isDefaultTime} (current: ${currentHour}:${String(currentMinute).padStart(2, '0')})`);
+        if (isDefaultTime) {
           console.log('[SCHEDULER] Checking daily notifications (default 10:00)');
           // Сегодня в МСК - конвертируем в UTC для сравнения с БД
           const todayStartMoscow = new Date(nowMoscow.getFullYear(), nowMoscow.getMonth(), nowMoscow.getUTCDate());
@@ -998,6 +1010,9 @@ async function sendAllNotifications() {
       const nowUTC1h = new Date(nowMoscow1h.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
       const oneHourLaterUTC = new Date(nowUTC1h.getTime() + 60 * 60 * 1000);
       
+      console.log(`[SCHEDULER] Querying dishes expiring in 1 hour`);
+      console.log(`[SCHEDULER] Time range: ${nowUTC1h.toISOString()} to ${oneHourLaterUTC.toISOString()}`);
+      
       const { data: dishes, error } = await supabase
         .from('dishes')
         .select('id, name, expires_at, chat_id')
@@ -1009,8 +1024,9 @@ async function sendAllNotifications() {
       if (error) {
         console.error('[SCHEDULER] Error fetching one hour dishes:', error);
         results.oneHour.errors++;
-      } else if (dishes && dishes.length > 0) {
-        console.log(`[SCHEDULER] Found ${dishes.length} dishes expiring in 1 hour`);
+      } else {
+        console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring in 1 hour`);
+        if (dishes && dishes.length > 0) {
         
         const dishesByChat = {};
         for (const dish of dishes) {
@@ -1066,6 +1082,9 @@ async function sendAllNotifications() {
         }
       }
 
+      console.log(`[SCHEDULER] Querying expired dishes`);
+      console.log(`[SCHEDULER] Expired before: ${nowUTCExp.toISOString()}`);
+      
       const { data: dishes, error } = await supabase
         .from('dishes')
         .select('id, name, expires_at, chat_id')
@@ -1075,8 +1094,9 @@ async function sendAllNotifications() {
       if (error) {
         console.error('[SCHEDULER] Error fetching expired dishes:', error);
         results.expired.errors++;
-      } else if (dishes && dishes.length > 0) {
-        console.log(`[SCHEDULER] Found ${dishes.length} expired dishes`);
+      } else {
+        console.log(`[SCHEDULER] Found ${dishes?.length || 0} expired dishes`);
+        if (dishes && dishes.length > 0) {
         dishes.forEach(d => {
           console.log(`[SCHEDULER] Expired dish: ${d.name}, expires_at: ${d.expires_at}, chat_id: ${d.chat_id}`);
         });
@@ -1132,7 +1152,12 @@ async function sendAllNotifications() {
       results.expired.errors++;
     }
 
-    console.log('[SCHEDULER] Summary:', JSON.stringify(results, null, 2));
+    console.log('[SCHEDULER] ========================================');
+    console.log('[SCHEDULER] Summary:');
+    console.log(`[SCHEDULER] Daily notifications: ${results.daily.sent} sent, ${results.daily.errors} errors`);
+    console.log(`[SCHEDULER] One hour notifications: ${results.oneHour.sent} sent, ${results.oneHour.errors} errors`);
+    console.log(`[SCHEDULER] Expired notifications: ${results.expired.sent} sent, ${results.expired.errors} errors`);
+    console.log('[SCHEDULER] ========================================');
     return results;
 
   } catch (error) {
@@ -1145,27 +1170,39 @@ async function sendAllNotifications() {
 let schedulerInterval = null;
 
 function startScheduler() {
+  console.log('[SCHEDULER] ========================================');
+  console.log('[SCHEDULER] Starting scheduler...');
+  console.log('[SCHEDULER] ========================================');
+  
   // Останавливаем предыдущий интервал если был
   if (schedulerInterval) {
+    console.log('[SCHEDULER] Clearing previous interval');
     clearInterval(schedulerInterval);
   }
   
   // Запускаем сразу
+  console.log('[SCHEDULER] Running initial notification check...');
   sendAllNotifications().catch(error => {
     console.error('[SCHEDULER] Initial run error:', error);
+    console.error('[SCHEDULER] Error stack:', error.stack);
   });
   
   // Затем каждые 15 минут
   schedulerInterval = setInterval(async () => {
     try {
-      console.log('[SCHEDULER] Scheduled run triggered');
+      console.log('[SCHEDULER] ========================================');
+      console.log('[SCHEDULER] Scheduled run triggered (every 15 minutes)');
+      console.log('[SCHEDULER] ========================================');
       await sendAllNotifications();
     } catch (error) {
       console.error('[SCHEDULER] Interval error:', error);
+      console.error('[SCHEDULER] Error stack:', error.stack);
     }
   }, 15 * 60 * 1000); // 15 минут
   
-  console.log('[SCHEDULER] Scheduler started (runs every 15 minutes)');
+  console.log('[SCHEDULER] ✅ Scheduler started successfully');
+  console.log('[SCHEDULER] Will run every 15 minutes');
+  console.log('[SCHEDULER] ========================================');
 }
 
 // HTTP сервер для health check (Render)
