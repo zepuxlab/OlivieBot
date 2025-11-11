@@ -1090,6 +1090,35 @@ async function sendAllNotifications() {
     console.log('[SCHEDULER] Current time (МСК):', nowMoscowExp.toISOString());
     console.log('[SCHEDULER] Current time (UTC for DB):', nowUTCExp.toISOString());
     try {
+      // Получаем ВСЕ блюда (не только active) для диагностики
+      const { data: allDishesDebug, error: allDishesError } = await supabase
+        .from('dishes')
+        .select('id, name, expires_at, chat_id, status')
+        .limit(100);
+      
+      if (allDishesError) {
+        console.error('[SCHEDULER] Error fetching all dishes:', allDishesError);
+      } else {
+        console.log(`[SCHEDULER] Total dishes in DB (all statuses): ${allDishesDebug?.length || 0}`);
+        if (allDishesDebug && allDishesDebug.length > 0) {
+          const activeCount = allDishesDebug.filter(d => d.status === 'active').length;
+          console.log(`[SCHEDULER] Active dishes: ${activeCount}`);
+          console.log(`[SCHEDULER] Removed dishes: ${allDishesDebug.filter(d => d.status === 'removed').length}`);
+          console.log(`[SCHEDULER] Expired dishes: ${allDishesDebug.filter(d => d.status === 'expired').length}`);
+          
+          // Показываем все активные блюда
+          const activeDishes = allDishesDebug.filter(d => d.status === 'active');
+          if (activeDishes.length > 0) {
+            console.log(`[SCHEDULER] Active dishes details:`);
+            activeDishes.forEach(d => {
+              const expiresAt = new Date(d.expires_at);
+              const isExpired = expiresAt <= nowUTCExp;
+              console.log(`[SCHEDULER]   - "${d.name}": expires_at=${d.expires_at}, isExpired=${isExpired}, chat_id=${d.chat_id}`);
+            });
+          }
+        }
+      }
+      
       // Получаем все активные блюда для проверки
       const { data: allActiveDishes, error: allError } = await supabase
         .from('dishes')
@@ -1100,7 +1129,7 @@ async function sendAllNotifications() {
       if (allError) {
         console.error('[SCHEDULER] Error fetching all active dishes:', allError);
       } else {
-        console.log(`[SCHEDULER] Total active dishes: ${allActiveDishes?.length || 0}`);
+        console.log(`[SCHEDULER] Total active dishes (from query): ${allActiveDishes?.length || 0}`);
         if (allActiveDishes && allActiveDishes.length > 0) {
           const expiredCount = allActiveDishes.filter(d => new Date(d.expires_at) <= nowUTCExp).length;
           console.log(`[SCHEDULER] Dishes that should be expired (МСК): ${expiredCount}`);
