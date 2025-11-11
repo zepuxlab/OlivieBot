@@ -1218,16 +1218,26 @@ async function sendAllNotifications() {
               console.log(`[SCHEDULER] ✅ Expired notification sent to ${chatId} for ${userDishes.length} dishes`);
               results.expired.sent++;
               
-              const dishIds = userDishes.map(d => d.id);
-              const { error: updateError } = await supabase
-                .from('dishes')
-                .update({ status: 'expired' })
-                .in('id', dishIds);
+              // ВАЖНО: обновляем статус на 'expired' только для блюд со статусом 'active'
+              // Блюда со статусом 'expired' уже обновлены, их не трогаем
+              // Это позволяет отправлять уведомления повторно, пока блюдо не списано
+              const dishIds = userDishes
+                .filter(d => d.status === 'active')
+                .map(d => d.id);
               
-              if (updateError) {
-                console.error(`[SCHEDULER] Error updating expired dishes:`, updateError);
+              if (dishIds.length > 0) {
+                const { error: updateError } = await supabase
+                  .from('dishes')
+                  .update({ status: 'expired' })
+                  .in('id', dishIds);
+                
+                if (updateError) {
+                  console.error(`[SCHEDULER] Error updating expired dishes:`, updateError);
+                } else {
+                  console.log(`[SCHEDULER] Updated ${dishIds.length} dishes to expired status (but keeping them for repeated notifications)`);
+                }
               } else {
-                console.log(`[SCHEDULER] Updated ${dishIds.length} dishes to expired status`);
+                console.log(`[SCHEDULER] All dishes already have expired status, skipping update (will continue sending notifications)`);
               }
             } catch (err) {
               console.error(`[SCHEDULER] ❌ Error sending expired notification to ${chatId}:`, err.message);
