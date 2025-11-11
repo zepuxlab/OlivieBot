@@ -28,16 +28,31 @@ function formatTimeUntil(expiresAt) {
   const now = new Date();
   const expires = new Date(expiresAt);
   const diffMs = expires - now;
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
   
-  if (diffHours > 0) {
-    return `через ${diffHours} ч ${diffMinutes > 0 ? diffMinutes + ' мин' : ''}`;
-  } else if (diffMinutes > 0) {
-    return `через ${diffMinutes} мин`;
-  } else {
+  if (diffMs <= 0) {
     return 'истёк';
   }
+  
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  
+  const parts = [];
+  if (diffDays > 0) {
+    parts.push(`${diffDays} ${diffDays === 1 ? 'день' : diffDays < 5 ? 'дня' : 'дней'}`);
+  }
+  if (diffHours > 0) {
+    parts.push(`${diffHours} ${diffHours === 1 ? 'час' : diffHours < 5 ? 'часа' : 'часов'}`);
+  }
+  if (diffMinutes > 0 && diffDays === 0) {
+    parts.push(`${diffMinutes} ${diffMinutes === 1 ? 'минута' : diffMinutes < 5 ? 'минуты' : 'минут'}`);
+  }
+  
+  if (parts.length === 0) {
+    return 'менее минуты';
+  }
+  
+  return `через ${parts.join(' ')}`;
 }
 
 // Форматирование времени для отображения
@@ -342,22 +357,35 @@ bot.hears('📦 Список блюд', async (ctx) => {
       return;
     }
 
-    // Формируем список блюд
+    // Формируем список блюд с датой и временем
     const dishesList = dishes.map((dish, index) => {
+      const expiresDate = new Date(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
-      return `${index + 1}. ${dish.name} — до ${expiresTime} (${timeUntil})`;
-    }).join('\n');
+      
+      // Форматируем дату
+      const day = String(expiresDate.getDate()).padStart(2, '0');
+      const month = String(expiresDate.getMonth() + 1).padStart(2, '0');
+      const dateStr = `${day}.${month}`;
+      
+      return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
+    }).join('\n\n');
 
-    // Создаем кнопки для списания
-    const buttons = dishes.map((dish, index) => [
-      {
-        text: `${index + 1}. ${dish.name} ❌ Списать`,
+    // Создаем кнопки для списания (ограничиваем длину текста кнопки)
+    const buttons = dishes.map((dish, index) => {
+      const buttonText = dish.name.length > 20 
+        ? `${index + 1}. ${dish.name.substring(0, 17)}... ❌` 
+        : `${index + 1}. ${dish.name} ❌`;
+      
+      return [{
+        text: buttonText,
         callback_data: `remove_${dish.id}`
-      }
-    ]);
+      }];
+    });
 
-    await ctx.reply(dishesList, {
+    const message = `📦 Список активных блюд:\n\n${dishesList}`;
+
+    await ctx.reply(message, {
       reply_markup: {
         inline_keyboard: buttons
       }
@@ -373,6 +401,16 @@ bot.action(/^remove_/, async (ctx) => {
   const dishId = parseInt(ctx.callbackQuery.data.split('_')[1]);
 
   try {
+    // Получаем информацию о блюде перед удалением
+    const { data: dish, error: fetchError } = await supabase
+      .from('dishes')
+      .select('name')
+      .eq('id', dishId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Обновляем статус
     const { error } = await supabase
       .from('dishes')
       .update({ status: 'removed' })
@@ -380,8 +418,62 @@ bot.action(/^remove_/, async (ctx) => {
 
     if (error) throw error;
 
-    await ctx.answerCbQuery('Блюдо списано');
-    await ctx.editMessageText(ctx.callbackQuery.message.text + '\n\n✅ Списано');
+    await ctx.answerCbQuery(`✅ Блюдо "${dish.name}" списано`);
+    
+    // Получаем обновленный список блюд
+    const chatId = ctx.chat.id;
+    const { data: remainingDishes, error: listError } = await supabase
+      .from('dishes')
+      .select('id, name, expires_at')
+      .eq('status', 'active')
+      .eq('chat_id', chatId)
+      .order('expires_at', { ascending: true });
+
+    if (listError) {
+      // Если ошибка при получении списка, просто обновим текст
+      const originalText = ctx.callbackQuery.message.text;
+      await ctx.editMessageText(originalText + '\n\n✅ Блюдо списано');
+      return;
+    }
+
+    if (!remainingDishes || remainingDishes.length === 0) {
+      // Если все блюда списаны
+      await ctx.editMessageText('✅ Все блюда списаны. Нет активных блюд.');
+      return;
+    }
+
+    // Формируем обновленный список
+    const dishesList = remainingDishes.map((remainingDish, index) => {
+      const expiresDate = new Date(remainingDish.expires_at);
+      const expiresTime = formatTime(remainingDish.expires_at);
+      const timeUntil = formatTimeUntil(remainingDish.expires_at);
+      
+      const day = String(expiresDate.getDate()).padStart(2, '0');
+      const month = String(expiresDate.getMonth() + 1).padStart(2, '0');
+      const dateStr = `${day}.${month}`;
+      
+      return `${index + 1}. ${remainingDish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
+    }).join('\n\n');
+
+    // Создаем обновленные кнопки
+    const buttons = remainingDishes.map((remainingDish, index) => {
+      const buttonText = remainingDish.name.length > 20 
+        ? `${index + 1}. ${remainingDish.name.substring(0, 17)}... ❌` 
+        : `${index + 1}. ${remainingDish.name} ❌`;
+      
+      return [{
+        text: buttonText,
+        callback_data: `remove_${remainingDish.id}`
+      }];
+    });
+
+    const message = `📦 Список активных блюд:\n\n${dishesList}`;
+
+    await ctx.editMessageText(message, {
+      reply_markup: {
+        inline_keyboard: buttons
+      }
+    });
   } catch (error) {
     console.error('Error removing dish:', error);
     await ctx.answerCbQuery('Ошибка при списании блюда');
