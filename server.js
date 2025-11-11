@@ -1066,82 +1066,45 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000); // 15 минут
 
-// HTTP сервер для webhook
-const http = require('http');
-
-const server = http.createServer(async (req, res) => {
-  // Обработка webhook от Telegram
-  // Netlify Servers автоматически проксирует запросы, поэтому проверяем путь
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  if (req.method === 'POST' && (url.pathname === '/webhook' || url.pathname === '/.netlify/server')) {
-    let body = '';
-    
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-    
-    req.on('end', async () => {
-      try {
-        const update = JSON.parse(body);
-        console.log('[BOT] Webhook update received:', update.update_id);
-        await bot.handleUpdate(update);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (error) {
-        console.error('[BOT] Webhook error:', error);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: error.message }));
-      }
-    });
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
-  }
-});
-
-// Запуск сервера
-const PORT = process.env.PORT || 8888;
-
-async function startServer() {
+// Запуск бота через polling
+async function startBot() {
   try {
     // Удаляем webhook если был установлен (для чистоты)
     try {
-      await bot.telegram.deleteWebhook();
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       console.log('[BOT] Old webhook removed');
     } catch (error) {
       console.log('[BOT] No old webhook to remove');
     }
     
-    // Запускаем HTTP сервер
-    server.listen(PORT, () => {
-      console.log(`[SERVER] HTTP server started on port ${PORT}`);
-      console.log(`[SERVER] Webhook URL: https://devserver-main--oliviebot.netlify.app/webhook`);
-    });
+    console.log('[BOT] Starting bot with polling...');
+    await bot.launch();
+    console.log('[BOT] Bot started successfully with polling');
     
     // Запускаем scheduler сразу при старте
     console.log('[SCHEDULER] Running initial notification check...');
     await sendAllNotifications();
     
-    console.log('[BOT] Server ready to receive webhook updates');
+    console.log('[BOT] Bot is ready and polling for updates');
   } catch (error) {
-    console.error('[SERVER] Error starting server:', error);
+    console.error('[BOT] Error starting bot:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.once('SIGINT', () => {
-  console.log('[SERVER] Shutting down...');
-  server.close();
+  console.log('[BOT] Shutting down...');
+  bot.stop('SIGINT');
   process.exit(0);
 });
 
 process.once('SIGTERM', () => {
-  console.log('[SERVER] Shutting down...');
-  server.close();
+  console.log('[BOT] Shutting down...');
+  bot.stop('SIGTERM');
   process.exit(0);
 });
 
-// Запускаем сервер
-startServer();
+// Запускаем бота
+startBot();
 

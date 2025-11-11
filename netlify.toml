@@ -5,5 +5,3 @@
   command = "node server.js"
   port = 8888
 
-# Redirect не нужен для Netlify Servers - сервер обрабатывает все запросы напрямую
-
