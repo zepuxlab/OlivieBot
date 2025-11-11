@@ -1,15 +1,7 @@
 [build]
-  functions = "netlify/functions"
+  command = "echo 'No build needed'"
 
-[functions]
-  node_bundler = "esbuild"
-
-[[redirects]]
-  from = "/webhook"
-  to = "/.netlify/functions/bot"
-  status = 200
-
-[[scheduled]]
-  name = "scheduler"
-  cron = "* * * * *"
+[server]
+  command = "node server.js"
+  port = 8888
 

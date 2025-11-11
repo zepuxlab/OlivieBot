@@ -1,16 +1,13 @@
 # OlivieBot - Telegram бот для отслеживания сроков хранения блюд
 
-Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Netlify через webhook.
+Telegram-бот на Node.js с использованием Telegraf и Supabase для управления блюдами и уведомлений о сроке хранения. Деплой на Netlify Servers с использованием polling.
 
 ## Структура проекта
 
 ```
 OlivieBot/
-├── netlify/
-│   └── functions/
-│       ├── bot.js          # Webhook handler для Telegram
-│       └── scheduler.js    # Scheduled function для уведомлений
-├── netlify.toml            # Конфигурация Netlify
+├── server.js               # Основной серверный файл (бот + scheduler)
+├── netlify.toml            # Конфигурация Netlify Servers
 ├── package.json            # Зависимости проекта
 └── README.md               # Этот файл
 ```
@@ -103,32 +100,13 @@ git push -u origin main
 - `SUPABASE_URL` - URL вашего Supabase проекта
 - `SUPABASE_KEY` - anon key из Supabase
 
-### 4. Установка webhook
+### 4. Проверка работы бота
 
-После деплоя получите URL вашего сайта (например: `https://your-site.netlify.app`)
+После деплоя бот автоматически запустится и начнет работать через polling. Webhook не требуется.
 
-Выполните запрос (замените `<BOT_TOKEN>` и `<site>` на ваши значения):
-
-```bash
-curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<site>.netlify.app/webhook"
-```
-
-Или откройте в браузере:
-```
-https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<site>.netlify.app/webhook
-```
-
-Вы должны получить ответ:
-```json
-{"ok":true,"result":true,"description":"Webhook was set"}
-```
-
-### 5. Проверка webhook
-
-Проверить текущий webhook:
-```
-https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
-```
+Проверить статус бота можно через логи в Netlify Dashboard:
+- Site settings → Functions → Logs
+- Ищите сообщения `[BOT] Bot started successfully`
 
 ## Локальная разработка
 
@@ -154,18 +132,13 @@ SUPABASE_KEY=your_supabase_anon_key
 npm run dev
 ```
 
-Netlify Dev автоматически запустит функции локально.
-
-**Важно**: Для локальной разработки с webhook используйте [ngrok](https://ngrok.com) или другой туннелинг сервис:
+Или напрямую:
 
 ```bash
-ngrok http 8888
+node server.js
 ```
 
-Затем установите webhook на ngrok URL:
-```
-https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://your-ngrok-url.ngrok.io/webhook
-```
+Netlify Dev автоматически запустит сервер локально. Бот будет работать через polling, webhook не требуется.
 
 ## Функциональность бота
 
