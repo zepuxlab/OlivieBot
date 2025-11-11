@@ -1206,6 +1206,7 @@ async function startBot() {
     }
 
     // Проверяем текущий webhook несколько раз с более длинными задержками
+    console.log('[BOT] Verifying webhook is deleted...');
     for (let i = 0; i < 7; i++) {
       try {
         const webhookInfo = await bot.telegram.getWebhookInfo();
@@ -1216,7 +1217,7 @@ async function startBot() {
           await bot.telegram.deleteWebhook({ drop_pending_updates: true });
           await new Promise(resolve => setTimeout(resolve, 5000)); // Увеличена задержка до 5 секунд
         } else {
-          console.log('[BOT] ✅ Webhook confirmed deleted');
+          console.log('[BOT] ✅ Webhook confirmed deleted - no webhook URL found');
           break;
         }
       } catch (error) {
@@ -1225,6 +1226,18 @@ async function startBot() {
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
       }
+    }
+    
+    // Финальная проверка webhook перед запуском polling
+    try {
+      const finalWebhookCheck = await bot.telegram.getWebhookInfo();
+      if (finalWebhookCheck.url && finalWebhookCheck.url !== '') {
+        console.log('[BOT] ⚠️ WARNING: Webhook still exists after all attempts:', finalWebhookCheck.url);
+      } else {
+        console.log('[BOT] ✅ Final webhook check: confirmed deleted');
+      }
+    } catch (error) {
+      console.log('[BOT] Could not perform final webhook check:', error.message);
     }
     
     // Дополнительная задержка перед запуском polling (увеличена для Render)
@@ -1239,12 +1252,15 @@ async function startBot() {
     
     // Запускаем polling с обработкой ошибок конфликта
     console.log('[BOT] Starting bot with polling...');
+    console.log('[BOT] Note: If you see 409 error, another bot instance is running polling');
+    console.log('[BOT] Check Render Dashboard - ensure only ONE service is running');
     let pollingStarted = false;
     let retryCount = 0;
     const maxRetries = 5;
     
     while (!pollingStarted && retryCount < maxRetries) {
       try {
+        console.log(`[BOT] Attempting to start polling (attempt ${retryCount + 1}/${maxRetries})...`);
         await bot.launch({
           dropPendingUpdates: true, // Игнорируем старые обновления
           allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
