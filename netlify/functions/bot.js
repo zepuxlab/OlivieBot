@@ -212,6 +212,17 @@ bot.on('text', async (ctx) => {
         ]
       }
     });
+  } else if (state.action === 'waiting_for_custom_minutes') {
+    const minutesText = ctx.message.text.trim();
+    const minutes = parseInt(minutesText);
+    
+    if (isNaN(minutes) || minutes <= 0) {
+      await ctx.reply('Пожалуйста, введите положительное число минут (например: 30, 90, 120):');
+      return;
+    }
+
+    // Сохраняем блюдо с указанным временем в минутах
+    await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
   }
 });
 
@@ -227,30 +238,14 @@ bot.action(/^duration_/, async (ctx) => {
   }
 
   if (durationStr === 'custom') {
-    // Показываем кнопки для кастомного времени
-    await ctx.editMessageText('Выберите дополнительное время:', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '+1 ч', callback_data: 'custom_1' },
-            { text: '+6 ч', callback_data: 'custom_6' }
-          ],
-          [
-            { text: '+24 ч', callback_data: 'custom_24' }
-          ],
-          [
-            { text: 'Сохранить', callback_data: 'custom_save' }
-          ]
-        ]
-      }
-    });
+    // Запрашиваем ввод времени в минутах
+    await ctx.editMessageText('Введите время хранения в минутах (например: 30, 90, 120):');
     await ctx.answerCbQuery();
     
     // Сохраняем состояние для кастомного времени
     userStates.set(userId, {
       ...state,
-      action: 'selecting_custom_duration',
-      custom_hours: 0
+      action: 'waiting_for_custom_minutes'
     });
     return;
   }
@@ -260,59 +255,22 @@ bot.action(/^duration_/, async (ctx) => {
   await saveDish(ctx, state.dish_name, hours, userId);
 });
 
-// Обработка кастомного времени
-bot.action(/^custom_/, async (ctx) => {
-  const action = ctx.callbackQuery.data.split('_')[1];
-  const userId = ctx.from.id;
-  const state = userStates.get(userId);
-
-  if (!state || state.action !== 'selecting_custom_duration') {
-    await ctx.answerCbQuery('Ошибка');
-    return;
-  }
-
-  if (action === 'save') {
-    if (state.custom_hours === 0) {
-      await ctx.answerCbQuery('Выберите время перед сохранением');
-      return;
-    }
-    await saveDish(ctx, state.dish_name, state.custom_hours, userId);
-  } else {
-    // Добавляем часы
-    const hoursToAdd = parseInt(action);
-    const newTotal = (state.custom_hours || 0) + hoursToAdd;
-    
-    userStates.set(userId, {
-      ...state,
-      custom_hours: newTotal
-    });
-
-    await ctx.editMessageText(`Выбрано: ${newTotal} часов\nВыберите дополнительное время:`, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '+1 ч', callback_data: 'custom_1' },
-            { text: '+6 ч', callback_data: 'custom_6' }
-          ],
-          [
-            { text: '+24 ч', callback_data: 'custom_24' }
-          ],
-          [
-            { text: 'Сохранить', callback_data: 'custom_save' }
-          ]
-        ]
-      }
-    });
-    await ctx.answerCbQuery();
-  }
-});
 
 // Сохранение блюда
-async function saveDish(ctx, dishName, hours, userId) {
+// timeValue - значение времени (часы или минуты)
+// isMinutes - true если timeValue в минутах, false если в часах
+async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
   try {
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000);
     const chatId = ctx.chat.id;
+    
+    // Конвертируем время в миллисекунды
+    let expiresAt;
+    if (isMinutes) {
+      expiresAt = new Date(now.getTime() + timeValue * 60 * 1000);
+    } else {
+      expiresAt = new Date(now.getTime() + timeValue * 60 * 60 * 1000);
+    }
 
     // Сохраняем блюдо
     const { data: dish, error: dishError } = await supabase
@@ -329,22 +287,38 @@ async function saveDish(ctx, dishName, hours, userId) {
       .select()
       .single();
 
-    if (dishError) throw dishError;
+    if (dishError) {
+      console.error('Supabase error:', dishError);
+      throw dishError;
+    }
 
     // Очищаем состояние
     userStates.delete(userId);
 
     const expiresTime = formatTime(expiresAt);
-    await ctx.editMessageText(
-      `✅ Блюдо "${dishName}" добавлено!\n` +
-      `Срок хранения: до ${expiresTime} (${formatTimeUntil(expiresAt)})`,
-      getMainMenu()
-    );
-    await ctx.answerCbQuery();
+    const message = `✅ Блюдо "${dishName}" добавлено!\n` +
+      `Срок хранения: до ${expiresTime} (${formatTimeUntil(expiresAt)})`;
+    
+    // Проверяем, является ли это callback query или обычное сообщение
+    if (ctx.callbackQuery) {
+      // Для callback query используем editMessageText без клавиатуры, затем отправляем новое сообщение с меню
+      await ctx.editMessageText(message);
+      await ctx.answerCbQuery();
+      await ctx.reply('Выберите действие:', getMainMenu());
+    } else {
+      // Для обычного сообщения просто отправляем ответ с меню
+      await ctx.reply(message, getMainMenu());
+    }
   } catch (error) {
     console.error('Error saving dish:', error);
-    await ctx.editMessageText('Произошла ошибка при сохранении блюда. Попробуйте позже.');
-    await ctx.answerCbQuery();
+    const errorMessage = 'Произошла ошибка при сохранении блюда. Попробуйте позже.';
+    
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(errorMessage);
+      await ctx.answerCbQuery();
+    } else {
+      await ctx.reply(errorMessage);
+    }
     userStates.delete(userId);
   }
 }
