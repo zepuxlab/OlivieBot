@@ -838,11 +838,11 @@ async function sendAllNotifications() {
   };
 
   try {
-    const now = getMoscowTime();
-    const currentHour = now.getUTCHours();
-    const currentMinute = now.getUTCMinutes();
+    const nowMoscow = getMoscowTime();
+    const currentHour = nowMoscow.getUTCHours();
+    const currentMinute = nowMoscow.getUTCMinutes();
     
-    console.log(`[SCHEDULER] Starting at ${now.toISOString()} (МСК: ${currentHour}:${currentMinute})`);
+    console.log(`[SCHEDULER] Starting at ${nowMoscow.toISOString()} (МСК: ${currentHour}:${currentMinute})`);
 
     // 1. Ежедневное уведомление (проверяем настройки каждого пользователя)
     console.log('[SCHEDULER] Checking daily notifications');
@@ -863,9 +863,10 @@ async function sendAllNotifications() {
           if (currentHour === settingHour && currentMinute >= settingMinute && currentMinute < settingMinute + 15) {
             console.log(`[SCHEDULER] Sending daily notification to ${userSetting.chat_id} at ${userSetting.morning_notification_time}`);
             
-            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
-            const todayEnd = new Date(todayStart);
-            todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
+            // Сегодня в МСК - конвертируем в UTC для сравнения с БД
+            const todayStartMoscow = new Date(nowMoscow.getFullYear(), nowMoscow.getMonth(), nowMoscow.getUTCDate());
+            const todayStartUTC = new Date(todayStartMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC
+            const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
 
             const { data: dishes, error } = await supabase
               .from('dishes')
@@ -873,8 +874,8 @@ async function sendAllNotifications() {
               .eq('status', 'active')
               .eq('notified_day', false)
               .eq('chat_id', userSetting.chat_id)
-              .gte('expires_at', todayStart.toISOString())
-              .lt('expires_at', todayEnd.toISOString());
+              .gte('expires_at', todayStartUTC.toISOString())
+              .lt('expires_at', todayEndUTC.toISOString());
 
             if (error) {
               console.error(`[SCHEDULER] Error fetching daily dishes for ${userSetting.chat_id}:`, error);
@@ -905,17 +906,18 @@ async function sendAllNotifications() {
       if (!allUsers || allUsers.length === 0) {
         if (currentHour === 10 && currentMinute < 15) {
           console.log('[SCHEDULER] Checking daily notifications (default 10:00)');
-          const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
-          const todayEnd = new Date(todayStart);
-          todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
+          // Сегодня в МСК - конвертируем в UTC для сравнения с БД
+          const todayStartMoscow = new Date(nowMoscow.getFullYear(), nowMoscow.getMonth(), nowMoscow.getUTCDate());
+          const todayStartUTC = new Date(todayStartMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC
+          const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
 
           const { data: dishes, error } = await supabase
             .from('dishes')
             .select('id, name, expires_at, chat_id')
             .eq('status', 'active')
             .eq('notified_day', false)
-            .gte('expires_at', todayStart.toISOString())
-            .lt('expires_at', todayEnd.toISOString());
+            .gte('expires_at', todayStartUTC.toISOString())
+            .lt('expires_at', todayEndUTC.toISOString());
 
           if (error) {
             console.error('[SCHEDULER] Error fetching daily dishes:', error);
@@ -957,14 +959,18 @@ async function sendAllNotifications() {
     // 2. Уведомление за 1 час до истечения
     console.log('[SCHEDULER] Checking one hour notifications');
     try {
-      const nowUTC = new Date(); // UTC для запроса к БД
+      // Используем МСК для сравнения (expires_at в БД хранится в UTC, но сравниваем с МСК)
+      const nowMoscow = getMoscowTime();
+      const nowUTC = new Date(nowMoscow.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
+      const oneHourLaterUTC = new Date(nowUTC.getTime() + 60 * 60 * 1000);
+      
       const { data: dishes, error } = await supabase
         .from('dishes')
         .select('id, name, expires_at, chat_id')
         .eq('status', 'active')
         .eq('notified_one_hour', false)
         .gte('expires_at', nowUTC.toISOString())
-        .lte('expires_at', new Date(nowUTC.getTime() + 60 * 60 * 1000).toISOString());
+        .lte('expires_at', oneHourLaterUTC.toISOString());
 
       if (error) {
         console.error('[SCHEDULER] Error fetching one hour dishes:', error);
@@ -1003,9 +1009,11 @@ async function sendAllNotifications() {
 
     // 3. Уведомления об истекших блюдах
     console.log('[SCHEDULER] Checking expired dishes');
-    const nowUTC = new Date(); // UTC для запроса к БД
-    console.log('[SCHEDULER] Current time (МСК):', now.toISOString());
-    console.log('[SCHEDULER] Current time (UTC):', nowUTC.toISOString());
+    // Используем МСК для сравнения (expires_at в БД хранится в UTC, но сравниваем с МСК)
+    const nowMoscow = getMoscowTime();
+    const nowUTC = new Date(nowMoscow.getTime() - 3 * 60 * 60 * 1000); // Конвертируем МСК обратно в UTC для сравнения с БД
+    console.log('[SCHEDULER] Current time (МСК):', nowMoscow.toISOString());
+    console.log('[SCHEDULER] Current time (UTC for DB):', nowUTC.toISOString());
     try {
       // Получаем все активные блюда для проверки
       const { data: allActiveDishes, error: allError } = await supabase
@@ -1020,7 +1028,7 @@ async function sendAllNotifications() {
         console.log(`[SCHEDULER] Total active dishes: ${allActiveDishes?.length || 0}`);
         if (allActiveDishes && allActiveDishes.length > 0) {
           const expiredCount = allActiveDishes.filter(d => new Date(d.expires_at) <= nowUTC).length;
-          console.log(`[SCHEDULER] Dishes that should be expired: ${expiredCount}`);
+          console.log(`[SCHEDULER] Dishes that should be expired (МСК): ${expiredCount}`);
         }
       }
 
