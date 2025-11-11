@@ -189,11 +189,7 @@ bot.on('text', async (ctx) => {
   const state = userStates.get(userId);
   
   if (!state) {
-    // Проверяем, не является ли это командой из главного меню
-    if (ctx.message.text === '📦 Список блюд') {
-      return; // Обработается в bot.hears
-    }
-    return;
+    return; // Если нет состояния, не обрабатываем
   }
 
   if (state.action === 'waiting_for_dish_name') {

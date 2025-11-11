@@ -15,250 +15,235 @@ function formatTime(date) {
   return `${hours}:${minutes}`;
 }
 
-// Ежедневное уведомление в 10:00 о блюдах, срок которых истекает сегодня
-async function sendDailyNotifications() {
+// Объединенная функция для всех уведомлений
+async function sendAllNotifications() {
+  const results = {
+    daily: { sent: 0, errors: 0 },
+    oneHour: { sent: 0, errors: 0 },
+    expired: { sent: 0, errors: 0 }
+  };
+
   try {
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayEnd = new Date(todayStart);
-    todayEnd.setDate(todayEnd.getDate() + 1);
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    
+    console.log(`[SCHEDULER] Starting at ${now.toISOString()} (${currentHour}:${currentMinute})`);
 
-    // Получаем блюда, срок которых истекает сегодня и еще не было уведомления
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at, chat_id')
-      .eq('status', 'active')
-      .eq('notified_day', false)
-      .gte('expires_at', todayStart.toISOString())
-      .lt('expires_at', todayEnd.toISOString());
-
-    if (error) {
-      console.error('Error fetching dishes for daily notification:', error);
-      return;
-    }
-
-    if (!dishes || dishes.length === 0) {
-      return;
-    }
-
-    // Группируем по chat_id
-    const dishesByChat = {};
-    for (const dish of dishes) {
-      const chatId = dish.chat_id;
-      if (!chatId) continue; // Пропускаем если нет chat_id
-      
-      if (!dishesByChat[chatId]) {
-        dishesByChat[chatId] = [];
-      }
-      dishesByChat[chatId].push(dish);
-    }
-
-    // Отправляем уведомления
-    for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-      const messages = userDishes.map(dish => {
-        const dishName = dish.name || 'Неизвестное блюдо';
-        const expiresTime = formatTime(dish.expires_at);
-        return `⚠ Сегодня истекает срок хранения: ${dishName} до ${expiresTime}`;
-      });
-
+    // 1. Ежедневное уведомление в 10:00
+    if (currentHour === 10 && currentMinute < 15) {
+      console.log('[SCHEDULER] Checking daily notifications (10:00)');
       try {
-        await bot.telegram.sendMessage(chatId, messages.join('\n'));
-        
-        // Обновляем notified_day для всех блюд этого пользователя
-        const dishIds = userDishes.map(d => d.id);
-        await supabase
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const todayEnd = new Date(todayStart);
+        todayEnd.setDate(todayEnd.getDate() + 1);
+
+        const { data: dishes, error } = await supabase
           .from('dishes')
-          .update({ notified_day: true })
-          .in('id', dishIds);
-      } catch (err) {
-        console.error(`Error sending daily notification to ${chatId}:`, err);
-      }
-    }
-  } catch (error) {
-    console.error('Error in sendDailyNotifications:', error);
-  }
-}
+          .select('id, name, expires_at, chat_id')
+          .eq('status', 'active')
+          .eq('notified_day', false)
+          .gte('expires_at', todayStart.toISOString())
+          .lt('expires_at', todayEnd.toISOString());
 
-// Уведомление за 1 час до истечения
-async function sendOneHourNotifications() {
-  try {
-    const now = new Date();
-    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+        if (error) {
+          console.error('[SCHEDULER] Error fetching daily dishes:', error);
+          results.daily.errors++;
+        } else if (dishes && dishes.length > 0) {
+          console.log(`[SCHEDULER] Found ${dishes.length} dishes expiring today`);
+          
+          const dishesByChat = {};
+          for (const dish of dishes) {
+            if (!dish.chat_id) continue;
+            if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+            dishesByChat[dish.chat_id].push(dish);
+          }
 
-    // Получаем блюда, срок которых истекает в течение часа
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at, chat_id')
-      .eq('status', 'active')
-      .eq('notified_one_hour', false)
-      .gte('expires_at', now.toISOString())
-      .lte('expires_at', oneHourLater.toISOString());
-
-    if (error) {
-      console.error('Error fetching dishes for one hour notification:', error);
-      return;
-    }
-
-    if (!dishes || dishes.length === 0) {
-      return;
-    }
-
-    // Группируем по chat_id
-    const dishesByChat = {};
-    for (const dish of dishes) {
-      const chatId = dish.chat_id;
-      if (!chatId) continue;
-      
-      if (!dishesByChat[chatId]) {
-        dishesByChat[chatId] = [];
-      }
-      dishesByChat[chatId].push(dish);
-    }
-
-    // Отправляем уведомления
-    for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-      const messages = userDishes.map(dish => {
-        const dishName = dish.name || 'Неизвестное блюдо';
-        return `⏳ Через 1 час истекает: ${dishName}`;
-      });
-
-      try {
-        await bot.telegram.sendMessage(chatId, messages.join('\n'));
-        
-        // Обновляем notified_one_hour для всех блюд этого пользователя
-        const dishIds = userDishes.map(d => d.id);
-        await supabase
-          .from('dishes')
-          .update({ notified_one_hour: true })
-          .in('id', dishIds);
-      } catch (err) {
-        console.error(`Error sending one hour notification to ${chatId}:`, err);
-      }
-    }
-  } catch (error) {
-    console.error('Error in sendOneHourNotifications:', error);
-  }
-}
-
-// Пометка истекших блюд и отправка уведомлений
-async function markExpiredDishes() {
-  try {
-    const now = new Date();
-    console.log('Checking for expired dishes at:', now.toISOString());
-
-    // Получаем все истекшие активные блюда
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at, chat_id')
-      .eq('status', 'active')
-      .lte('expires_at', now.toISOString());
-
-    if (error) {
-      console.error('Error fetching expired dishes:', error);
-      return;
-    }
-
-    if (!dishes || dishes.length === 0) {
-      console.log('No expired dishes found');
-      return;
-    }
-
-    console.log(`Found ${dishes.length} expired dishes`);
-
-    // Группируем по chat_id
-    const dishesByChat = {};
-    for (const dish of dishes) {
-      const chatId = dish.chat_id;
-      if (!chatId) {
-        console.warn(`Dish ${dish.id} has no chat_id, skipping`);
-        continue;
-      }
-      
-      if (!dishesByChat[chatId]) {
-        dishesByChat[chatId] = [];
-      }
-      dishesByChat[chatId].push(dish);
-    }
-
-    console.log(`Sending notifications to ${Object.keys(dishesByChat).length} users`);
-
-    // Отправляем уведомления и обновляем статус
-    for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-      const messages = userDishes.map(dish => {
-        const dishName = dish.name || 'Неизвестное блюдо';
-        return `❌ Срок истёк: ${dishName}. Требуется списание.`;
-      });
-
-      const messageText = messages.join('\n');
-      console.log(`Sending expired notification to chat ${chatId}:`, messageText);
-
-      try {
-        await bot.telegram.sendMessage(chatId, messageText);
-        console.log(`Successfully sent notification to chat ${chatId}`);
-        
-        // Обновляем статус на 'expired' для всех блюд этого пользователя
-        const dishIds = userDishes.map(d => d.id);
-        const { error: updateError } = await supabase
-          .from('dishes')
-          .update({ status: 'expired' })
-          .in('id', dishIds);
-        
-        if (updateError) {
-          console.error(`Error updating status for dishes:`, updateError);
-        } else {
-          console.log(`Updated ${dishIds.length} dishes to expired status`);
+          for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+            try {
+              const messages = userDishes.map(d => 
+                `⚠ Сегодня истекает срок хранения: ${d.name || 'Неизвестное блюдо'} до ${formatTime(d.expires_at)}`
+              );
+              await bot.telegram.sendMessage(chatId, messages.join('\n'));
+              console.log(`[SCHEDULER] Daily notification sent to ${chatId}`);
+              results.daily.sent++;
+              
+              const dishIds = userDishes.map(d => d.id);
+              await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
+            } catch (err) {
+              console.error(`[SCHEDULER] Error sending daily notification to ${chatId}:`, err.message);
+              results.daily.errors++;
+            }
+          }
         }
       } catch (err) {
-        console.error(`Error sending expired notification to ${chatId}:`, err);
-        // Продолжаем обработку других пользователей даже при ошибке
+        console.error('[SCHEDULER] Error in daily notifications:', err);
+        results.daily.errors++;
       }
     }
+
+    // 2. Уведомление за 1 час до истечения
+    console.log('[SCHEDULER] Checking one hour notifications');
+    try {
+      const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+      const { data: dishes, error } = await supabase
+        .from('dishes')
+        .select('id, name, expires_at, chat_id')
+        .eq('status', 'active')
+        .eq('notified_one_hour', false)
+        .gte('expires_at', now.toISOString())
+        .lte('expires_at', oneHourLater.toISOString());
+
+      if (error) {
+        console.error('[SCHEDULER] Error fetching one hour dishes:', error);
+        results.oneHour.errors++;
+      } else if (dishes && dishes.length > 0) {
+        console.log(`[SCHEDULER] Found ${dishes.length} dishes expiring in 1 hour`);
+        
+        const dishesByChat = {};
+        for (const dish of dishes) {
+          if (!dish.chat_id) continue;
+          if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+          dishesByChat[dish.chat_id].push(dish);
+        }
+
+        for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+          try {
+            const messages = userDishes.map(d => 
+              `⏳ Через 1 час истекает: ${d.name || 'Неизвестное блюдо'}`
+            );
+            await bot.telegram.sendMessage(chatId, messages.join('\n'));
+            console.log(`[SCHEDULER] One hour notification sent to ${chatId}`);
+            results.oneHour.sent++;
+            
+            const dishIds = userDishes.map(d => d.id);
+            await supabase.from('dishes').update({ notified_one_hour: true }).in('id', dishIds);
+          } catch (err) {
+            console.error(`[SCHEDULER] Error sending one hour notification to ${chatId}:`, err.message);
+            results.oneHour.errors++;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[SCHEDULER] Error in one hour notifications:', err);
+      results.oneHour.errors++;
+    }
+
+    // 3. Уведомления об истекших блюдах
+    console.log('[SCHEDULER] Checking expired dishes');
+    try {
+      const { data: dishes, error } = await supabase
+        .from('dishes')
+        .select('id, name, expires_at, chat_id')
+        .eq('status', 'active')
+        .lte('expires_at', now.toISOString());
+
+      if (error) {
+        console.error('[SCHEDULER] Error fetching expired dishes:', error);
+        results.expired.errors++;
+      } else if (dishes && dishes.length > 0) {
+        console.log(`[SCHEDULER] Found ${dishes.length} expired dishes`);
+        
+        const dishesByChat = {};
+        for (const dish of dishes) {
+          if (!dish.chat_id) {
+            console.warn(`[SCHEDULER] Dish ${dish.id} has no chat_id`);
+            continue;
+          }
+          if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+          dishesByChat[dish.chat_id].push(dish);
+        }
+
+        console.log(`[SCHEDULER] Sending expired notifications to ${Object.keys(dishesByChat).length} users`);
+
+        for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+          try {
+            const messages = userDishes.map(d => 
+              `❌ Срок истёк: ${d.name || 'Неизвестное блюдо'}. Требуется списание.`
+            );
+            await bot.telegram.sendMessage(chatId, messages.join('\n'));
+            console.log(`[SCHEDULER] Expired notification sent to ${chatId} for ${userDishes.length} dishes`);
+            results.expired.sent++;
+            
+            const dishIds = userDishes.map(d => d.id);
+            const { error: updateError } = await supabase
+              .from('dishes')
+              .update({ status: 'expired' })
+              .in('id', dishIds);
+            
+            if (updateError) {
+              console.error(`[SCHEDULER] Error updating expired dishes:`, updateError);
+            } else {
+              console.log(`[SCHEDULER] Updated ${dishIds.length} dishes to expired status`);
+            }
+          } catch (err) {
+            console.error(`[SCHEDULER] Error sending expired notification to ${chatId}:`, err.message);
+            results.expired.errors++;
+          }
+        }
+      } else {
+        console.log('[SCHEDULER] No expired dishes found');
+      }
+    } catch (err) {
+      console.error('[SCHEDULER] Error in expired dishes check:', err);
+      results.expired.errors++;
+    }
+
+    console.log('[SCHEDULER] Summary:', JSON.stringify(results, null, 2));
+    return results;
+
   } catch (error) {
-    console.error('Error in markExpiredDishes:', error);
+    console.error('[SCHEDULER] Fatal error in sendAllNotifications:', error);
+    throw error;
   }
 }
 
 // Главная функция планировщика
 exports.handler = async (event, context) => {
+  const startTime = Date.now();
+  console.log('[SCHEDULER] ========================================');
+  console.log('[SCHEDULER] Handler called');
+  console.log('[SCHEDULER] Event:', JSON.stringify(event, null, 2));
+  
   try {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-
-    console.log(`Scheduler running at ${now.toISOString()} (${currentHour}:${currentMinute})`);
-
-    // Проверяем, нужно ли отправить ежедневное уведомление (в 10:00)
-    if (currentHour === 10 && currentMinute < 15) {
-      console.log('Running daily notifications check');
-      await sendDailyNotifications();
+    // Проверяем переменные окружения
+    if (!process.env.BOT_TOKEN) {
+      console.error('[SCHEDULER] ERROR: BOT_TOKEN not set');
+      return { statusCode: 500, body: JSON.stringify({ error: 'BOT_TOKEN not configured' }) };
+    }
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+      console.error('[SCHEDULER] ERROR: Supabase credentials not set');
+      return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
     }
 
-    // Проверяем уведомления за 1 час до истечения
-    console.log('Running one hour notifications check');
-    await sendOneHourNotifications();
-
-    // Проверяем и помечаем истекшие блюда (это должно работать всегда)
-    console.log('Running expired dishes check');
-    await markExpiredDishes();
+    const results = await sendAllNotifications();
+    const duration = Date.now() - startTime;
+    
+    console.log('[SCHEDULER] Completed in', duration, 'ms');
+    console.log('[SCHEDULER] ========================================');
 
     return {
       statusCode: 200,
       body: JSON.stringify({ 
         ok: true,
-        timestamp: now.toISOString(),
-        hour: currentHour,
-        minute: currentMinute
+        timestamp: new Date().toISOString(),
+        duration: duration,
+        results: results
       })
     };
   } catch (error) {
-    console.error('Scheduler error:', error);
-    console.error('Error stack:', error.stack);
+    const duration = Date.now() - startTime;
+    console.error('[SCHEDULER] Fatal error:', error);
+    console.error('[SCHEDULER] Stack:', error.stack);
+    console.log('[SCHEDULER] ========================================');
+    
     return {
       statusCode: 500,
       body: JSON.stringify({ 
         error: 'Internal server error',
         message: error.message,
-        stack: error.stack
+        stack: error.stack,
+        duration: duration
       })
     };
   }
