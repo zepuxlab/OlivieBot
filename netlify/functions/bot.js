@@ -75,11 +75,13 @@ function formatDateTime(date) {
 
 // Команда /start
 bot.start((ctx) => {
+  console.log('[BOT] /start command from user', ctx.from.id);
   ctx.reply('Добро пожаловать! Выберите действие:', getMainMenu());
 });
 
 // Обработка кнопки "Добавить блюдо"
 bot.hears('➕ Добавить блюдо', async (ctx) => {
+  console.log('[BOT] Add dish button clicked by user', ctx.from.id);
   try {
     const chatId = ctx.chat.id;
     
@@ -195,6 +197,11 @@ bot.action(/^dish_/, async (ctx) => {
 
 // Обработка текстового ввода для нового блюда
 bot.on('text', async (ctx) => {
+  // Пропускаем команды из главного меню - они обрабатываются через bot.hears
+  if (ctx.message.text === '➕ Добавить блюдо' || ctx.message.text === '📦 Список блюд') {
+    return;
+  }
+  
   const userId = ctx.from.id;
   const state = userStates.get(userId);
   
@@ -347,8 +354,10 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
 // Обработка кнопки "Список блюд"
 bot.hears('📦 Список блюд', async (ctx) => {
   try {
+    console.log('[BOT] List dishes button clicked by user', ctx.from.id);
     const chatId = ctx.chat.id;
     
+    console.log('[BOT] Fetching dishes for chat_id:', chatId);
     const { data: dishes, error } = await supabase
       .from('dishes')
       .select('id, name, expires_at')
@@ -356,7 +365,12 @@ bot.hears('📦 Список блюд', async (ctx) => {
       .eq('chat_id', chatId)
       .order('expires_at', { ascending: true });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[BOT] Error fetching dishes:', error);
+      throw error;
+    }
+
+    console.log('[BOT] Found dishes:', dishes?.length || 0);
 
     if (!dishes || dishes.length === 0) {
       await ctx.reply('Нет активных блюд.', getMainMenu());
@@ -391,14 +405,17 @@ bot.hears('📦 Список блюд', async (ctx) => {
 
     const message = `📦 Список активных блюд:\n\n${dishesList}`;
 
+    console.log('[BOT] Sending dishes list to user');
     await ctx.reply(message, {
       reply_markup: {
         inline_keyboard: buttons
       }
     });
+    console.log('[BOT] Dishes list sent successfully');
   } catch (error) {
-    console.error('Error fetching dishes:', error);
-    ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
+    console.error('[BOT] Error fetching dishes:', error);
+    console.error('[BOT] Error stack:', error.stack);
+    await ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
   }
 });
 
@@ -681,22 +698,34 @@ async function sendAllNotifications() {
 
 // Handler для webhook (Telegram)
 exports.handler = async (event, context) => {
+  console.log('[BOT] ========================================');
+  console.log('[BOT] Webhook handler called');
+  console.log('[BOT] Event body:', event.body ? 'present' : 'missing');
+  
   try {
     // Парсим тело запроса
     const body = JSON.parse(event.body);
+    console.log('[BOT] Update type:', body.message?.text || body.callback_query?.data || 'unknown');
+    console.log('[BOT] From user:', body.message?.from?.id || body.callback_query?.from?.id);
     
     // Обрабатываем обновление через Telegraf
     await bot.handleUpdate(body);
+    console.log('[BOT] Update processed successfully');
     
     return {
       statusCode: 200,
       body: JSON.stringify({ ok: true })
     };
   } catch (error) {
-    console.error('Handler error:', error);
+    console.error('[BOT] Handler error:', error);
+    console.error('[BOT] Error stack:', error.stack);
+    console.log('[BOT] ========================================');
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' })
+      body: JSON.stringify({ 
+        error: 'Internal server error',
+        message: error.message 
+      })
     };
   }
 };
