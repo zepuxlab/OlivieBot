@@ -102,6 +102,7 @@ git push -u origin main
 - `BOT_TOKEN` - токен вашего Telegram бота
 - `SUPABASE_URL` - URL вашего Supabase проекта
 - `SUPABASE_KEY` - anon key из Supabase
+- `PORT` - порт для health check сервера (по умолчанию 4000, опционально)
 
 ### 4. Проверка работы бота
 
@@ -112,6 +113,9 @@ git push -u origin main
 
 Проверить статус бота можно через логи в Render Dashboard:
 - Logs → ищите сообщения `[BOT] ✅ Bot started successfully with polling`
+
+**Health Check:** Бот имеет health check endpoint на `/health` для мониторинга в Render.
+Можно настроить в Render Dashboard → Settings → Health Check Path: `/health`
 
 ## Локальная разработка
 

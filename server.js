@@ -1108,6 +1108,20 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000); // 15 минут
 
+// HTTP сервер для health check (Render)
+const http = require('http');
+const PORT = process.env.PORT || 4000;
+
+const server = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'oliviebot' }));
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
+  }
+});
+
 // Запуск бота через polling
 async function startBot() {
   try {
@@ -1135,6 +1149,12 @@ async function startBot() {
       console.log('[BOT] Could not check webhook info:', error.message);
     }
     
+    // Запускаем HTTP сервер для health check
+    server.listen(PORT, () => {
+      console.log(`[SERVER] Health check server started on port ${PORT}`);
+      console.log(`[SERVER] Health check: http://localhost:${PORT}/health`);
+    });
+    
     console.log('[BOT] Starting bot with polling...');
     await bot.launch({
       dropPendingUpdates: true, // Игнорируем старые обновления
@@ -1157,12 +1177,14 @@ async function startBot() {
 // Graceful shutdown
 process.once('SIGINT', () => {
   console.log('[BOT] Shutting down...');
+  server.close();
   bot.stop('SIGINT');
   process.exit(0);
 });
 
 process.once('SIGTERM', () => {
   console.log('[BOT] Shutting down...');
+  server.close();
   bot.stop('SIGTERM');
   process.exit(0);
 });
