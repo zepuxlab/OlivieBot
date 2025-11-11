@@ -1213,7 +1213,7 @@ async function startBot() {
         if (error.response && error.response.error_code === 409) {
           console.error(`[BOT] ❌ Conflict error (attempt ${retryCount}/${maxRetries}): Another instance is running`);
           if (retryCount < maxRetries) {
-            const waitTime = retryCount * 5; // Увеличиваем задержку с каждой попыткой
+            const waitTime = retryCount * 10; // Увеличиваем задержку: 10, 20, 30, 40, 50 секунд
             console.log(`[BOT] Waiting ${waitTime} seconds before retry...`);
             await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
             
@@ -1221,11 +1221,17 @@ async function startBot() {
             try {
               await bot.telegram.deleteWebhook({ drop_pending_updates: true });
               console.log('[BOT] Webhook deleted again before retry');
+              // Дополнительная задержка после удаления webhook
+              await new Promise(resolve => setTimeout(resolve, 5000));
             } catch (e) {
               console.log('[BOT] Could not delete webhook:', e.message);
             }
           } else {
             console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
+            console.error('[BOT] Check Render Dashboard - make sure only ONE service is running');
+            // Запускаем scheduler даже если polling не запустился
+            console.log('[SCHEDULER] Starting scheduler anyway (bot may work via webhook)...');
+            startScheduler();
             throw error;
           }
         } else {
