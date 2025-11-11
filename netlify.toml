@@ -5,3 +5,8 @@
   command = "node server.js"
   port = 8888
 
+[[redirects]]
+  from = "/webhook"
+  to = "/.netlify/server"
+  status = 200
+

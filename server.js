@@ -1066,26 +1066,80 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000); // 15 минут
 
-// Запуск бота через polling
-async function startBot() {
+// HTTP сервер для webhook
+const http = require('http');
+
+const server = http.createServer(async (req, res) => {
+  // Обработка webhook от Telegram
+  if (req.method === 'POST' && req.url === '/webhook') {
+    let body = '';
+    
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    
+    req.on('end', async () => {
+      try {
+        const update = JSON.parse(body);
+        console.log('[BOT] Webhook update received:', update.update_id);
+        await bot.handleUpdate(update);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (error) {
+        console.error('[BOT] Webhook error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: error.message }));
+      }
+    });
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
+  }
+});
+
+// Запуск сервера
+const PORT = process.env.PORT || 8888;
+
+async function startServer() {
   try {
-    console.log('[BOT] Starting bot with polling...');
-    await bot.launch();
-    console.log('[BOT] Bot started successfully');
+    // Удаляем webhook если был установлен (для чистоты)
+    try {
+      await bot.telegram.deleteWebhook();
+      console.log('[BOT] Old webhook removed');
+    } catch (error) {
+      console.log('[BOT] No old webhook to remove');
+    }
+    
+    // Запускаем HTTP сервер
+    server.listen(PORT, () => {
+      console.log(`[SERVER] HTTP server started on port ${PORT}`);
+      console.log(`[SERVER] Webhook URL: https://devserver-main--oliviebot.netlify.app/webhook`);
+    });
     
     // Запускаем scheduler сразу при старте
     console.log('[SCHEDULER] Running initial notification check...');
     await sendAllNotifications();
+    
+    console.log('[BOT] Server ready to receive webhook updates');
   } catch (error) {
-    console.error('[BOT] Error starting bot:', error);
+    console.error('[SERVER] Error starting server:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', () => {
+  console.log('[SERVER] Shutting down...');
+  server.close();
+  process.exit(0);
+});
 
-// Запускаем бота
-startBot();
+process.once('SIGTERM', () => {
+  console.log('[SERVER] Shutting down...');
+  server.close();
+  process.exit(0);
+});
+
+// Запускаем сервер
+startServer();
 
