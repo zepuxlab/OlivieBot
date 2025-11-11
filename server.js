@@ -929,20 +929,20 @@ async function sendAllNotifications() {
             } else {
               console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring today for ${userSetting.chat_id}`);
               if (dishes && dishes.length > 0) {
-              
-              try {
-                const messages = dishes.map(d => 
-                  `⚠ Сегодня истекает срок хранения: ${d.name || 'Неизвестное блюдо'} до ${formatTime(d.expires_at)}`
-                );
-                await bot.telegram.sendMessage(userSetting.chat_id, messages.join('\n'));
-                console.log(`[SCHEDULER] Daily notification sent to ${userSetting.chat_id}`);
-                results.daily.sent++;
-                
-                const dishIds = dishes.map(d => d.id);
-                await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
-              } catch (err) {
-                console.error(`[SCHEDULER] Error sending daily notification to ${userSetting.chat_id}:`, err.message);
-                results.daily.errors++;
+                try {
+                  const messages = dishes.map(d => 
+                    `⚠ Сегодня истекает срок хранения: ${d.name || 'Неизвестное блюдо'} до ${formatTime(d.expires_at)}`
+                  );
+                  await bot.telegram.sendMessage(userSetting.chat_id, messages.join('\n'));
+                  console.log(`[SCHEDULER] Daily notification sent to ${userSetting.chat_id}`);
+                  results.daily.sent++;
+                  
+                  const dishIds = dishes.map(d => d.id);
+                  await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
+                } catch (err) {
+                  console.error(`[SCHEDULER] Error sending daily notification to ${userSetting.chat_id}:`, err.message);
+                  results.daily.errors++;
+                }
               }
             }
           }
@@ -1031,28 +1031,28 @@ async function sendAllNotifications() {
       } else {
         console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring in 1 hour`);
         if (dishes && dishes.length > 0) {
-        
-        const dishesByChat = {};
-        for (const dish of dishes) {
-          if (!dish.chat_id) continue;
-          if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
-          dishesByChat[dish.chat_id].push(dish);
-        }
+          const dishesByChat = {};
+          for (const dish of dishes) {
+            if (!dish.chat_id) continue;
+            if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+            dishesByChat[dish.chat_id].push(dish);
+          }
 
-        for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-          try {
-            const messages = userDishes.map(d => 
-              `⏳ Через 1 час истекает: ${d.name || 'Неизвестное блюдо'}`
-            );
-            await bot.telegram.sendMessage(chatId, messages.join('\n'));
-            console.log(`[SCHEDULER] One hour notification sent to ${chatId}`);
-            results.oneHour.sent++;
-            
-            const dishIds = userDishes.map(d => d.id);
-            await supabase.from('dishes').update({ notified_one_hour: true }).in('id', dishIds);
-          } catch (err) {
-            console.error(`[SCHEDULER] Error sending one hour notification to ${chatId}:`, err.message);
-            results.oneHour.errors++;
+          for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+            try {
+              const messages = userDishes.map(d => 
+                `⏳ Через 1 час истекает: ${d.name || 'Неизвестное блюдо'}`
+              );
+              await bot.telegram.sendMessage(chatId, messages.join('\n'));
+              console.log(`[SCHEDULER] One hour notification sent to ${chatId}`);
+              results.oneHour.sent++;
+              
+              const dishIds = userDishes.map(d => d.id);
+              await supabase.from('dishes').update({ notified_one_hour: true }).in('id', dishIds);
+            } catch (err) {
+              console.error(`[SCHEDULER] Error sending one hour notification to ${chatId}:`, err.message);
+              results.oneHour.errors++;
+            }
           }
         }
       }
