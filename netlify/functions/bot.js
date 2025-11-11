@@ -196,16 +196,19 @@ bot.action(/^dish_/, async (ctx) => {
 });
 
 // Обработка текстового ввода для нового блюда
+// ВАЖНО: этот обработчик должен быть ПОСЛЕ всех bot.hears
 bot.on('text', async (ctx) => {
-  // Пропускаем команды из главного меню - они обрабатываются через bot.hears
-  if (ctx.message.text === '➕ Добавить блюдо' || ctx.message.text === '📦 Список блюд') {
-    return;
-  }
-  
   const userId = ctx.from.id;
   const state = userStates.get(userId);
   
+  // Если нет состояния и это не команда из меню - игнорируем
   if (!state) {
+    // Проверяем, не является ли это командой из главного меню
+    const text = ctx.message.text;
+    if (text === '➕ Добавить блюдо' || text === '📦 Список блюд') {
+      console.log('[BOT] Menu command in bot.on(text), should be handled by bot.hears');
+      return;
+    }
     return; // Если нет состояния, не обрабатываем
   }
 
@@ -251,6 +254,77 @@ bot.on('text', async (ctx) => {
 
     // Сохраняем блюдо с указанным временем в минутах
     await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
+  }
+});
+
+// Обработка кнопки "Список блюд"
+// ВАЖНО: должен быть зарегистрирован ДО bot.on('text')
+bot.hears('📦 Список блюд', async (ctx) => {
+  try {
+    console.log('[BOT] ===== List dishes button clicked =====');
+    console.log('[BOT] User ID:', ctx.from.id);
+    console.log('[BOT] Chat ID:', ctx.chat.id);
+    const chatId = ctx.chat.id;
+    
+    console.log('[BOT] Fetching dishes for chat_id:', chatId);
+    const { data: dishes, error } = await supabase
+      .from('dishes')
+      .select('id, name, expires_at')
+      .eq('status', 'active')
+      .eq('chat_id', chatId)
+      .order('expires_at', { ascending: true });
+
+    if (error) {
+      console.error('[BOT] Error fetching dishes:', error);
+      throw error;
+    }
+
+    console.log('[BOT] Found dishes:', dishes?.length || 0);
+
+    if (!dishes || dishes.length === 0) {
+      await ctx.reply('Нет активных блюд.', getMainMenu());
+      return;
+    }
+
+    // Формируем список блюд с датой и временем
+    const dishesList = dishes.map((dish, index) => {
+      const expiresDate = new Date(dish.expires_at);
+      const expiresTime = formatTime(dish.expires_at);
+      const timeUntil = formatTimeUntil(dish.expires_at);
+      
+      // Форматируем дату
+      const day = String(expiresDate.getDate()).padStart(2, '0');
+      const month = String(expiresDate.getMonth() + 1).padStart(2, '0');
+      const dateStr = `${day}.${month}`;
+      
+      return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
+    }).join('\n\n');
+
+    // Создаем кнопки для списания (ограничиваем длину текста кнопки)
+    const buttons = dishes.map((dish, index) => {
+      const buttonText = dish.name.length > 20 
+        ? `${index + 1}. ${dish.name.substring(0, 17)}... ❌` 
+        : `${index + 1}. ${dish.name} ❌`;
+      
+      return [{
+        text: buttonText,
+        callback_data: `remove_${dish.id}`
+      }];
+    });
+
+    const message = `📦 Список активных блюд:\n\n${dishesList}`;
+
+    console.log('[BOT] Sending dishes list to user');
+    await ctx.reply(message, {
+      reply_markup: {
+        inline_keyboard: buttons
+      }
+    });
+    console.log('[BOT] Dishes list sent successfully');
+  } catch (error) {
+    console.error('[BOT] Error fetching dishes:', error);
+    console.error('[BOT] Error stack:', error.stack);
+    await ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
   }
 });
 
@@ -350,74 +424,6 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     userStates.delete(userId);
   }
 }
-
-// Обработка кнопки "Список блюд"
-bot.hears('📦 Список блюд', async (ctx) => {
-  try {
-    console.log('[BOT] List dishes button clicked by user', ctx.from.id);
-    const chatId = ctx.chat.id;
-    
-    console.log('[BOT] Fetching dishes for chat_id:', chatId);
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at')
-      .eq('status', 'active')
-      .eq('chat_id', chatId)
-      .order('expires_at', { ascending: true });
-
-    if (error) {
-      console.error('[BOT] Error fetching dishes:', error);
-      throw error;
-    }
-
-    console.log('[BOT] Found dishes:', dishes?.length || 0);
-
-    if (!dishes || dishes.length === 0) {
-      await ctx.reply('Нет активных блюд.', getMainMenu());
-      return;
-    }
-
-    // Формируем список блюд с датой и временем
-    const dishesList = dishes.map((dish, index) => {
-      const expiresDate = new Date(dish.expires_at);
-      const expiresTime = formatTime(dish.expires_at);
-      const timeUntil = formatTimeUntil(dish.expires_at);
-      
-      // Форматируем дату
-      const day = String(expiresDate.getDate()).padStart(2, '0');
-      const month = String(expiresDate.getMonth() + 1).padStart(2, '0');
-      const dateStr = `${day}.${month}`;
-      
-      return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
-    }).join('\n\n');
-
-    // Создаем кнопки для списания (ограничиваем длину текста кнопки)
-    const buttons = dishes.map((dish, index) => {
-      const buttonText = dish.name.length > 20 
-        ? `${index + 1}. ${dish.name.substring(0, 17)}... ❌` 
-        : `${index + 1}. ${dish.name} ❌`;
-      
-      return [{
-        text: buttonText,
-        callback_data: `remove_${dish.id}`
-      }];
-    });
-
-    const message = `📦 Список активных блюд:\n\n${dishesList}`;
-
-    console.log('[BOT] Sending dishes list to user');
-    await ctx.reply(message, {
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-    console.log('[BOT] Dishes list sent successfully');
-  } catch (error) {
-    console.error('[BOT] Error fetching dishes:', error);
-    console.error('[BOT] Error stack:', error.stack);
-    await ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
-  }
-});
 
 // Обработка списания блюда
 bot.action(/^remove_/, async (ctx) => {
