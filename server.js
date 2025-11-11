@@ -1128,26 +1128,47 @@ async function startBot() {
     console.log('[BOT] Initializing bot...');
     
     // Удаляем webhook если был установлен (для чистоты)
-    try {
-      console.log('[BOT] Attempting to delete webhook...');
-      const result = await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      console.log('[BOT] Webhook deleted successfully:', result);
-    } catch (error) {
-      console.log('[BOT] Error deleting webhook (may not exist):', error.message);
-      // Продолжаем даже если не удалось удалить webhook
+    let webhookDeleted = false;
+    for (let i = 0; i < 3; i++) {
+      try {
+        console.log(`[BOT] Attempting to delete webhook (attempt ${i + 1}/3)...`);
+        const result = await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        console.log('[BOT] Webhook deleted successfully:', result);
+        webhookDeleted = true;
+        break;
+      } catch (error) {
+        console.log(`[BOT] Error deleting webhook (attempt ${i + 1}/3):`, error.message);
+        if (i < 2) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Ждем 2 секунды перед повтором
+        }
+      }
     }
     
-    // Проверяем текущий webhook
-    try {
-      const webhookInfo = await bot.telegram.getWebhookInfo();
-      console.log('[BOT] Current webhook info:', JSON.stringify(webhookInfo, null, 2));
-      if (webhookInfo.url) {
-        console.log('[BOT] WARNING: Webhook still exists, trying to delete again...');
-        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    // Проверяем текущий webhook несколько раз
+    for (let i = 0; i < 5; i++) {
+      try {
+        const webhookInfo = await bot.telegram.getWebhookInfo();
+        console.log(`[BOT] Webhook check ${i + 1}/5:`, JSON.stringify(webhookInfo, null, 2));
+        
+        if (webhookInfo.url && webhookInfo.url !== '') {
+          console.log('[BOT] WARNING: Webhook still exists, deleting again...');
+          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Ждем 2 секунды
+        } else {
+          console.log('[BOT] ✅ Webhook confirmed deleted');
+          break;
+        }
+      } catch (error) {
+        console.log(`[BOT] Could not check webhook info (attempt ${i + 1}/5):`, error.message);
+        if (i < 4) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
       }
-    } catch (error) {
-      console.log('[BOT] Could not check webhook info:', error.message);
     }
+    
+    // Дополнительная задержка перед запуском polling
+    console.log('[BOT] Waiting 3 seconds before starting polling to ensure webhook is fully removed...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Запускаем HTTP сервер для health check
     server.listen(PORT, () => {
