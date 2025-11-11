@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "netlify dev"
+    "dev": "netlify dev",
+    "check-expired": "node checkExpired.js"
   },
   "keywords": ["telegram", "bot", "netlify", "supabase"],
   "author": "",
