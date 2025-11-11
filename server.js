@@ -711,19 +711,53 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     // Очищаем состояние
     userStates.delete(userId);
 
-    const expiresDateTime = formatDateTime(expiresAt);
-    const message = `✅ Блюдо "${dishName}" добавлено!\n` +
-      `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})`;
-    
-    // Проверяем, является ли это callback query или обычное сообщение
-    if (ctx.callbackQuery) {
-      // Для callback query используем editMessageText без клавиатуры, затем отправляем новое сообщение с меню
-      await ctx.editMessageText(message);
-      await ctx.answerCbQuery();
-      await ctx.reply('Выберите действие:', getMainMenu());
+    // Проверяем, не истек ли уже срок (по МСК)
+    const nowMoscow = getMoscowTime();
+    const nowUTC = new Date(nowMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC для сравнения с БД
+    const isExpired = new Date(expiresAt) <= nowUTC;
+
+    if (isExpired) {
+      // Срок уже истек - сразу отправляем уведомление и обновляем статус
+      console.log(`[BOT] Dish "${dishName}" already expired, sending notification immediately`);
+      
+      // Обновляем статус на expired
+      await supabase
+        .from('dishes')
+        .update({ status: 'expired' })
+        .eq('id', dish.id);
+      
+      // Отправляем уведомление
+      const expiredMessage = `❌ Срок истёк: ${dishName}. Требуется списание.`;
+      await ctx.reply(expiredMessage);
+      
+      const expiresDateTime = formatDateTime(expiresAt);
+      const message = `✅ Блюдо "${dishName}" добавлено!\n` +
+        `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})\n` +
+        `⚠️ Внимание: срок уже истёк!`;
+      
+      // Проверяем, является ли это callback query или обычное сообщение
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(message);
+        await ctx.answerCbQuery();
+        await ctx.reply('Выберите действие:', getMainMenu());
+      } else {
+        await ctx.reply(message, getMainMenu());
+      }
     } else {
-      // Для обычного сообщения просто отправляем ответ с меню
-      await ctx.reply(message, getMainMenu());
+      const expiresDateTime = formatDateTime(expiresAt);
+      const message = `✅ Блюдо "${dishName}" добавлено!\n` +
+        `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})`;
+      
+      // Проверяем, является ли это callback query или обычное сообщение
+      if (ctx.callbackQuery) {
+        // Для callback query используем editMessageText без клавиатуры, затем отправляем новое сообщение с меню
+        await ctx.editMessageText(message);
+        await ctx.answerCbQuery();
+        await ctx.reply('Выберите действие:', getMainMenu());
+      } else {
+        // Для обычного сообщения просто отправляем ответ с меню
+        await ctx.reply(message, getMainMenu());
+      }
     }
   } catch (error) {
     console.error('Error saving dish:', error);
