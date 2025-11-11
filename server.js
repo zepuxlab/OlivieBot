@@ -1317,15 +1317,31 @@ async function startBot() {
             }
           } else {
             console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
-            console.error('[BOT] Check Render Dashboard - make sure only ONE service is running');
-            console.error('[BOT] Another bot instance is using polling. This instance will continue running scheduler only.');
+            console.error('[BOT] ============================================');
+            console.error('[BOT] DIAGNOSTIC INFORMATION:');
+            console.error('[BOT] ============================================');
+            console.error('[BOT] Error: 409 Conflict - Another bot instance is using polling');
+            console.error('[BOT] This means another process is calling getUpdates with the same token');
+            console.error('[BOT] Possible causes:');
+            console.error('[BOT] 1. Multiple services running on Render with the same BOT_TOKEN');
+            console.error('[BOT] 2. Another deployment/service is still running');
+            console.error('[BOT] 3. Local development instance is running');
+            console.error('[BOT] ============================================');
+            console.error('[BOT] SOLUTION:');
+            console.error('[BOT] 1. Go to Render Dashboard → Services');
+            console.error('[BOT] 2. Check if there are multiple services with the same bot');
+            console.error('[BOT] 3. Stop ALL other services except ONE');
+            console.error('[BOT] 4. Wait 30 seconds, then restart this service');
+            console.error('[BOT] ============================================');
+            console.error('[BOT] This instance will continue running scheduler only.');
             
             // Запускаем scheduler даже если polling не запустился
             console.log('[SCHEDULER] Starting scheduler anyway (bot may work via webhook or another instance)...');
             startScheduler();
             
             // Не завершаем процесс - scheduler будет работать
-            console.log('[BOT] ⚠️ Bot polling failed, but scheduler is running. Check other instances.');
+            console.log('[BOT] ⚠️ Bot polling failed, but scheduler is running.');
+            console.log('[BOT] ⚠️ To fix: Stop other bot instances and restart this service.');
             return; // Выходим из функции, но процесс продолжает работать
           }
         } else {
@@ -1352,9 +1368,26 @@ async function startBot() {
       process.exit(1);
     } else {
       // Для ошибки 409 - продолжаем работу со scheduler
+      console.error('[BOT] ============================================');
+      console.error('[BOT] DIAGNOSTIC INFORMATION:');
+      console.error('[BOT] ============================================');
+      console.error('[BOT] Error: 409 Conflict - Another bot instance is using polling');
+      console.error('[BOT] This means another process is calling getUpdates with the same token');
+      console.error('[BOT] Possible causes:');
+      console.error('[BOT] 1. Multiple services running on Render with the same BOT_TOKEN');
+      console.error('[BOT] 2. Another deployment/service is still running');
+      console.error('[BOT] 3. Local development instance is running');
+      console.error('[BOT] ============================================');
+      console.error('[BOT] SOLUTION:');
+      console.error('[BOT] 1. Go to Render Dashboard → Services');
+      console.error('[BOT] 2. Check if there are multiple services with the same bot');
+      console.error('[BOT] 3. Stop ALL other services except ONE');
+      console.error('[BOT] 4. Wait 30 seconds, then restart this service');
+      console.error('[BOT] ============================================');
       console.log('[SCHEDULER] Starting scheduler (409 error - another instance running)...');
       startScheduler();
       console.log('[BOT] ⚠️ Bot polling failed due to conflict, but scheduler is running.');
+      console.log('[BOT] ⚠️ To fix: Stop other bot instances and restart this service.');
       // Не завершаем процесс - scheduler будет работать
     }
   }
