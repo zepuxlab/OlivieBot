@@ -133,6 +133,27 @@ bot.start(async (ctx) => {
 });
 
 // Команда /help
+// Тестовая команда для проверки уведомлений
+bot.command('test_notifications', async (ctx) => {
+  try {
+    await checkAuth(ctx);
+    await ctx.reply('🔍 Проверяю уведомления...');
+    
+    // Запускаем проверку уведомлений вручную
+    const results = await sendAllNotifications();
+    
+    const message = `📊 Результаты проверки уведомлений:\n\n` +
+      `✅ Ежедневные: ${results.daily.sent} отправлено, ${results.daily.errors} ошибок\n` +
+      `⏳ За 1 час: ${results.oneHour.sent} отправлено, ${results.oneHour.errors} ошибок\n` +
+      `❌ Истекшие: ${results.expired.sent} отправлено, ${results.expired.errors} ошибок`;
+    
+    await ctx.reply(message);
+  } catch (error) {
+    console.error('[BOT] Error in test_notifications:', error);
+    await ctx.reply('❌ Ошибка при проверке уведомлений: ' + error.message);
+  }
+});
+
 bot.command('help', async (ctx) => {
   const isAuthorized = await checkAuth(ctx);
   if (!isAuthorized) {
