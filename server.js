@@ -876,7 +876,11 @@ async function sendAllNotifications() {
     const currentHour = nowMoscow.getUTCHours();
     const currentMinute = nowMoscow.getUTCMinutes();
     
-    console.log(`[SCHEDULER] Starting at ${nowMoscow.toISOString()} (МСК: ${currentHour}:${currentMinute})`);
+    console.log(`[SCHEDULER] ========================================`);
+    console.log(`[SCHEDULER] Starting notification check`);
+    console.log(`[SCHEDULER] Current time (МСК): ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
+    console.log(`[SCHEDULER] ISO time: ${nowMoscow.toISOString()}`);
+    console.log(`[SCHEDULER] ========================================`);
 
     // 1. Ежедневное уведомление (проверяем настройки каждого пользователя)
     console.log('[SCHEDULER] Checking daily notifications');
