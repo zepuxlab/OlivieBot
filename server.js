@@ -1111,17 +1111,36 @@ setInterval(async () => {
 // Запуск бота через polling
 async function startBot() {
   try {
+    console.log('[BOT] Initializing bot...');
+    
     // Удаляем webhook если был установлен (для чистоты)
     try {
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      console.log('[BOT] Old webhook removed');
+      console.log('[BOT] Attempting to delete webhook...');
+      const result = await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      console.log('[BOT] Webhook deleted successfully:', result);
     } catch (error) {
-      console.log('[BOT] No old webhook to remove');
+      console.log('[BOT] Error deleting webhook (may not exist):', error.message);
+      // Продолжаем даже если не удалось удалить webhook
+    }
+    
+    // Проверяем текущий webhook
+    try {
+      const webhookInfo = await bot.telegram.getWebhookInfo();
+      console.log('[BOT] Current webhook info:', JSON.stringify(webhookInfo, null, 2));
+      if (webhookInfo.url) {
+        console.log('[BOT] WARNING: Webhook still exists, trying to delete again...');
+        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      }
+    } catch (error) {
+      console.log('[BOT] Could not check webhook info:', error.message);
     }
     
     console.log('[BOT] Starting bot with polling...');
-    await bot.launch();
-    console.log('[BOT] Bot started successfully with polling');
+    await bot.launch({
+      dropPendingUpdates: true, // Игнорируем старые обновления
+      allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
+    });
+    console.log('[BOT] ✅ Bot started successfully with polling');
     
     // Запускаем scheduler сразу при старте
     console.log('[SCHEDULER] Running initial notification check...');
@@ -1129,7 +1148,8 @@ async function startBot() {
     
     console.log('[BOT] Bot is ready and polling for updates');
   } catch (error) {
-    console.error('[BOT] Error starting bot:', error);
+    console.error('[BOT] ❌ Error starting bot:', error);
+    console.error('[BOT] Error stack:', error.stack);
     process.exit(1);
   }
 }
