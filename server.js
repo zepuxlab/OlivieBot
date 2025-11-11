@@ -1100,13 +1100,31 @@ async function sendAllNotifications() {
 }
 
 // Запуск scheduler каждые 15 минут
-setInterval(async () => {
-  try {
-    await sendAllNotifications();
-  } catch (error) {
-    console.error('[SCHEDULER] Interval error:', error);
+let schedulerInterval = null;
+
+function startScheduler() {
+  // Останавливаем предыдущий интервал если был
+  if (schedulerInterval) {
+    clearInterval(schedulerInterval);
   }
-}, 15 * 60 * 1000); // 15 минут
+  
+  // Запускаем сразу
+  sendAllNotifications().catch(error => {
+    console.error('[SCHEDULER] Initial run error:', error);
+  });
+  
+  // Затем каждые 15 минут
+  schedulerInterval = setInterval(async () => {
+    try {
+      console.log('[SCHEDULER] Scheduled run triggered');
+      await sendAllNotifications();
+    } catch (error) {
+      console.error('[SCHEDULER] Interval error:', error);
+    }
+  }, 15 * 60 * 1000); // 15 минут
+  
+  console.log('[SCHEDULER] Scheduler started (runs every 15 minutes)');
+}
 
 // HTTP сервер для health check (Render)
 const http = require('http');
@@ -1166,9 +1184,9 @@ async function startBot() {
       }
     }
     
-    // Дополнительная задержка перед запуском polling
-    console.log('[BOT] Waiting 3 seconds before starting polling to ensure webhook is fully removed...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Дополнительная задержка перед запуском polling (увеличена для Render)
+    console.log('[BOT] Waiting 10 seconds before starting polling to ensure webhook is fully removed...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
     
     // Запускаем HTTP сервер для health check
     server.listen(PORT, () => {
@@ -1216,9 +1234,9 @@ async function startBot() {
       }
     }
     
-    // Запускаем scheduler сразу при старте
-    console.log('[SCHEDULER] Running initial notification check...');
-    await sendAllNotifications();
+    // Запускаем scheduler
+    console.log('[SCHEDULER] Starting scheduler...');
+    startScheduler();
     
     console.log('[BOT] Bot is ready and polling for updates');
   } catch (error) {
@@ -1231,6 +1249,9 @@ async function startBot() {
 // Graceful shutdown
 process.once('SIGINT', () => {
   console.log('[BOT] Shutting down...');
+  if (schedulerInterval) {
+    clearInterval(schedulerInterval);
+  }
   server.close();
   bot.stop('SIGINT');
   process.exit(0);
@@ -1238,6 +1259,9 @@ process.once('SIGINT', () => {
 
 process.once('SIGTERM', () => {
   console.log('[BOT] Shutting down...');
+  if (schedulerInterval) {
+    clearInterval(schedulerInterval);
+  }
   server.close();
   bot.stop('SIGTERM');
   process.exit(0);
