@@ -1273,15 +1273,15 @@ async function sendAllNotifications() {
 let schedulerInterval = null;
 
 function startScheduler() {
+  // Проверяем, не запущен ли уже scheduler
+  if (schedulerInterval) {
+    console.log('[SCHEDULER] ⚠️ Scheduler already running (interval ID: ' + schedulerInterval + '), skipping...');
+    return;
+  }
+  
   console.log('[SCHEDULER] ========================================');
   console.log('[SCHEDULER] Starting scheduler...');
   console.log('[SCHEDULER] ========================================');
-  
-  // Останавливаем предыдущий интервал если был
-  if (schedulerInterval) {
-    console.log('[SCHEDULER] Clearing previous interval');
-    clearInterval(schedulerInterval);
-  }
   
   // Запускаем сразу
   console.log('[SCHEDULER] Running initial notification check...');
@@ -1305,6 +1305,7 @@ function startScheduler() {
   
   console.log('[SCHEDULER] ✅ Scheduler started successfully');
   console.log('[SCHEDULER] Will run every 1 minute');
+  console.log('[SCHEDULER] Interval ID:', schedulerInterval);
   console.log('[SCHEDULER] ========================================');
 }
 
@@ -1437,10 +1438,6 @@ async function startBot() {
         });
         pollingStarted = true;
         console.log('[BOT] ✅ Bot started successfully with polling');
-        
-        // Запускаем scheduler после успешного запуска polling
-        console.log('[SCHEDULER] Starting scheduler after successful polling start...');
-        startScheduler();
       } catch (error) {
         retryCount++;
         if (error.response && error.response.error_code === 409) {
