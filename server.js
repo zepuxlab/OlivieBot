@@ -13,19 +13,7 @@ const userStates = new Map();
 // Авторизованные пользователи (chat_id -> user data)
 const authorizedUsers = new Map();
 
-// Получение текущего времени в МСК (UTC+3)
-function getMoscowTime() {
-  const now = new Date();
-  const moscowOffset = 3 * 60 * 60 * 1000; // 3 часа в миллисекундах
-  const moscowTime = new Date(now.getTime() + moscowOffset);
-  return moscowTime;
-}
-
-// Конвертация UTC времени в МСК для отображения
-function toMoscowTime(date) {
-  const moscowOffset = 3 * 60 * 60 * 1000;
-  return new Date(new Date(date).getTime() + moscowOffset);
-}
+// Убраны функции конвертации МСК - используем только UTC
 
 // Главное меню
 function getMainMenu() {
@@ -41,10 +29,10 @@ function getMainMenu() {
   };
 }
 
-// Форматирование времени до истечения (используем МСК)
+// Форматирование времени до истечения (используем UTC)
 function formatTimeUntil(expiresAt) {
-  const now = getMoscowTime();
-  const expires = toMoscowTime(expiresAt);
+  const now = new Date();
+  const expires = new Date(expiresAt);
   const diffMs = expires - now;
   
   if (diffMs <= 0) {
@@ -73,17 +61,17 @@ function formatTimeUntil(expiresAt) {
   return `через ${parts.join(' ')}`;
 }
 
-// Форматирование времени для отображения (в МСК)
+// Форматирование времени для отображения (в UTC)
 function formatTime(date) {
-  const d = toMoscowTime(date);
+  const d = new Date(date);
   const hours = String(d.getUTCHours()).padStart(2, '0');
   const minutes = String(d.getUTCMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;
 }
 
-// Форматирование даты и времени для отображения (в МСК)
+// Форматирование даты и времени для отображения (в UTC)
 function formatDateTime(date) {
-  const d = toMoscowTime(date);
+  const d = new Date(date);
   const day = String(d.getUTCDate()).padStart(2, '0');
   const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   const hours = String(d.getUTCHours()).padStart(2, '0');
@@ -164,7 +152,7 @@ bot.command('help', async (ctx) => {
   const helpText = `📖 Помощь по использованию бота
 
 🕐 **Часовой пояс**
-Все времена отображаются и обрабатываются в часовом поясе МСК (Московское время, UTC+3).
+Все времена отображаются и обрабатываются в часовом поясе UTC.
 
 📋 **Основные функции:**
 
@@ -174,7 +162,7 @@ bot.command('help', async (ctx) => {
 
 📦 **Список блюд**
 • Показывает все активные блюда
-• Отображает дату истечения (в формате МСК) и оставшееся время
+• Отображает дату истечения (в формате UTC) и оставшееся время
 • Кнопка "❌ Списать" для каждого блюда
 
 🗑 **Списанные блюда**
@@ -186,11 +174,11 @@ bot.command('help', async (ctx) => {
 • Можно выбрать из предложенных или ввести кастомное время (ЧЧ:ММ)
 
 🔔 **Уведомления:**
-• Ежедневно в установленное время (по умолчанию 10:00 МСК) - о блюдах, срок которых истекает сегодня
+• Ежедневно в установленное время (по умолчанию 10:00 UTC) - о блюдах, срок которых истекает сегодня
 • За 1 час до истечения - предупреждение
 • При истечении срока - уведомление о необходимости списания
 
-💡 **Совет:** Все времена в боте отображаются в московском времени (МСК).`;
+💡 **Совет:** Все времена в боте отображаются в UTC.`;
 
   await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
@@ -362,7 +350,7 @@ bot.hears('📦 Список блюд', async (ctx) => {
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
       
-      // Форматируем дату (в МСК)
+          // Форматируем дату (в UTC)
       const day = String(expiresDate.getUTCDate()).padStart(2, '0');
       const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
       const dateStr = `${day}.${month}`;
@@ -927,9 +915,8 @@ async function sendAllNotifications() {
           if (isTimeMatch) {
             console.log(`[SCHEDULER] Sending daily notification to ${userSetting.chat_id} at ${userSetting.morning_notification_time}`);
             
-            // Сегодня в МСК - конвертируем в UTC для сравнения с БД
-            const todayStartMoscow = new Date(nowMoscow.getFullYear(), nowMoscow.getMonth(), nowMoscow.getUTCDate());
-            const todayStartUTC = new Date(todayStartMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC
+            // Сегодня в UTC
+            const todayStartUTC = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
             const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
 
             console.log(`[SCHEDULER] Querying dishes for chat ${userSetting.chat_id}`);
