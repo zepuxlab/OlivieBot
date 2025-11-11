@@ -4,21 +4,46 @@
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+// Глобальные переменные для бота и supabase (инициализируются при первом вызове или передаются извне)
+let bot = null;
+let supabase = null;
 
-if (!BOT_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('❌ ERROR: Missing environment variables!');
-  console.error('Required: BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY');
-  process.exit(1);
+// Инициализация (если вызывается как отдельный скрипт)
+function init() {
+  if (bot && supabase) {
+    return; // Уже инициализировано
+  }
+  
+  const BOT_TOKEN = process.env.BOT_TOKEN;
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_KEY = process.env.SUPABASE_KEY;
+
+  if (!BOT_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
+    console.error('[CHECK_EXPIRED] ❌ ERROR: Missing environment variables!');
+    console.error('[CHECK_EXPIRED] Required: BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY');
+    if (require.main === module) {
+      process.exit(1);
+    } else {
+      throw new Error('Missing environment variables');
+    }
+  }
+
+  bot = new Telegraf(BOT_TOKEN);
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  console.log('[CHECK_EXPIRED] Initialized bot and supabase clients');
 }
 
-const bot = new Telegraf(BOT_TOKEN);
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
 // Простая функция проверки истекших блюд
-async function checkExpiredDishes() {
+async function checkExpiredDishes(botInstance = null, supabaseInstance = null) {
+  // Если переданы экземпляры извне, используем их
+  if (botInstance && supabaseInstance) {
+    bot = botInstance;
+    supabase = supabaseInstance;
+    console.log('[CHECK_EXPIRED] Using provided bot and supabase instances');
+  } else {
+    // Иначе инициализируем сами
+    init();
+  }
   console.log('[CHECK_EXPIRED] ========================================');
   console.log('[CHECK_EXPIRED] Starting expired dishes check...');
   

@@ -1,19 +1,28 @@
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
+const http = require('http');
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
+// ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
-// Состояния пользователей для обработки текстовых вводов
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const PORT = process.env.PORT || 4000;
+
+if (!BOT_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ ERROR: Missing environment variables!');
+  console.error('Required: BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY');
+  process.exit(1);
+}
+
+const bot = new Telegraf(BOT_TOKEN);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Состояния пользователей
 const userStates = new Map();
-
-// Авторизованные пользователи (chat_id -> user data)
 const authorizedUsers = new Map();
 
-// Убраны функции конвертации МСК - используем только UTC
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 // Главное меню
 function getMainMenu() {
@@ -29,7 +38,7 @@ function getMainMenu() {
   };
 }
 
-// Форматирование времени до истечения (используем UTC)
+// Форматирование времени до истечения
 function formatTimeUntil(expiresAt) {
   const now = new Date();
   const expires = new Date(expiresAt);
@@ -61,7 +70,7 @@ function formatTimeUntil(expiresAt) {
   return `через ${parts.join(' ')}`;
 }
 
-// Форматирование времени для отображения (в UTC)
+// Форматирование времени
 function formatTime(date) {
   const d = new Date(date);
   const hours = String(d.getUTCHours()).padStart(2, '0');
@@ -69,7 +78,7 @@ function formatTime(date) {
   return `${hours}:${minutes}`;
 }
 
-// Форматирование даты и времени для отображения (в UTC)
+// Форматирование даты и времени
 function formatDateTime(date) {
   const d = new Date(date);
   const day = String(d.getUTCDate()).padStart(2, '0');
@@ -83,12 +92,10 @@ function formatDateTime(date) {
 async function checkAuth(ctx) {
   const chatId = ctx.chat.id;
   
-  // Проверяем в памяти
   if (authorizedUsers.has(chatId)) {
     return true;
   }
   
-  // Проверяем в базе данных
   const { data: user, error } = await supabase
     .from('users')
     .select('id, name, chat_id')
@@ -103,45 +110,23 @@ async function checkAuth(ctx) {
   return false;
 }
 
+// ==================== КОМАНДЫ БОТА ====================
+
 // Команда /start
 bot.start(async (ctx) => {
-  console.log('[BOT] /start command from user', ctx.from.id);
   const chatId = ctx.chat.id;
   
-  // Проверяем авторизацию
   const isAuthorized = await checkAuth(ctx);
-  
-  if (!isAuthorized) {
-    userStates.set(ctx.from.id, { action: 'waiting_for_username' });
-    await ctx.reply('Для использования бота необходима авторизация.\nВведите ваше имя:');
+  if (isAuthorized) {
+    await ctx.reply('Добро пожаловать! Используйте меню для навигации.', getMainMenu());
     return;
   }
   
-  await ctx.reply('Добро пожаловать! Выберите действие:', getMainMenu());
+  await ctx.reply('Для использования бота необходима авторизация.\nВведите ваше имя:');
+  userStates.set(chatId, { step: 'waiting_for_name' });
 });
 
 // Команда /help
-// Тестовая команда для проверки уведомлений
-bot.command('test_notifications', async (ctx) => {
-  try {
-    await checkAuth(ctx);
-    await ctx.reply('🔍 Проверяю уведомления...');
-    
-    // Запускаем проверку уведомлений вручную
-    const results = await sendAllNotifications();
-    
-    const message = `📊 Результаты проверки уведомлений:\n\n` +
-      `✅ Ежедневные: ${results.daily.sent} отправлено, ${results.daily.errors} ошибок\n` +
-      `⏳ За 1 час: ${results.oneHour.sent} отправлено, ${results.oneHour.errors} ошибок\n` +
-      `❌ Истекшие: ${results.expired.sent} отправлено, ${results.expired.errors} ошибок`;
-    
-    await ctx.reply(message);
-  } catch (error) {
-    console.error('[BOT] Error in test_notifications:', error);
-    await ctx.reply('❌ Ошибка при проверке уведомлений: ' + error.message);
-  }
-});
-
 bot.command('help', async (ctx) => {
   const isAuthorized = await checkAuth(ctx);
   if (!isAuthorized) {
@@ -176,511 +161,454 @@ bot.command('help', async (ctx) => {
 🔔 **Уведомления:**
 • Ежедневно в установленное время (по умолчанию 10:00 UTC) - о блюдах, срок которых истекает сегодня
 • За 1 час до истечения - предупреждение
-• При истечении срока - уведомление о необходимости списания
+• При истечении срока - уведомление о необходимости списания (проверяется каждую минуту)
 
 💡 **Совет:** Все времена в боте отображаются в UTC.`;
 
   await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
-// Обработка кнопки "Добавить блюдо"
-bot.hears('➕ Добавить блюдо', async (ctx) => {
-  console.log('[BOT] Add dish button clicked by user', ctx.from.id);
+// Обработка текстовых сообщений
+bot.on('text', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text;
+  const state = userStates.get(chatId);
   
-  // Проверка авторизации
+  // Проверяем, не является ли это командой меню
+  if (['➕ Добавить блюдо', '📦 Список блюд', '🗑 Списанные блюда', '⚙️ Настройки'].includes(text)) {
+    return; // Обработается в bot.hears
+  }
+  
+  // Обработка авторизации
+  if (state && state.step === 'waiting_for_name') {
+    const name = text.trim();
+    if (name.length < 2) {
+      await ctx.reply('Имя должно содержать минимум 2 символа. Попробуйте снова:');
+      return;
+    }
+    
+    userStates.set(chatId, { step: 'waiting_for_password', name });
+    await ctx.reply('Введите пароль (4 цифры):');
+    return;
+  }
+  
+  if (state && state.step === 'waiting_for_password') {
+    const password = text.trim();
+    if (!/^\d{4}$/.test(password)) {
+      await ctx.reply('Пароль должен состоять из 4 цифр. Попробуйте снова:');
+      return;
+    }
+    
+    try {
+      const { data: user, error } = await supabase
+        .from('users')
+        .insert({
+          name: state.name,
+          password: password,
+          chat_id: chatId
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        if (error.code === '23505') { // Unique violation
+          await ctx.reply('Пользователь с таким именем уже существует. Введите другое имя:');
+          userStates.set(chatId, { step: 'waiting_for_name' });
+        } else {
+          await ctx.reply('Ошибка при регистрации. Попробуйте снова через /start');
+          userStates.delete(chatId);
+        }
+        return;
+      }
+      
+      authorizedUsers.set(chatId, user);
+      userStates.delete(chatId);
+      await ctx.reply('✅ Авторизация успешна! Теперь вы можете использовать бота.', getMainMenu());
+    } catch (error) {
+      console.error('Error during registration:', error);
+      await ctx.reply('Произошла ошибка. Попробуйте снова через /start');
+      userStates.delete(chatId);
+    }
+    return;
+  }
+  
+  // Обработка ввода названия блюда
+  if (state && state.step === 'waiting_for_dish_name') {
+    const dishName = text.trim();
+    if (dishName.length < 1) {
+      await ctx.reply('Название блюда не может быть пустым. Попробуйте снова:');
+      return;
+    }
+    
+    userStates.set(chatId, { step: 'waiting_for_duration', dishName });
+    
+    const inlineKeyboard = {
+      inline_keyboard: [
+        [{ text: '12 часов', callback_data: 'duration_12' }],
+        [{ text: '24 часа', callback_data: 'duration_24' }],
+        [{ text: '48 часов', callback_data: 'duration_48' }],
+        [{ text: '72 часа', callback_data: 'duration_72' }],
+        [{ text: 'Другое время...', callback_data: 'duration_custom' }]
+      ]
+    };
+    
+    await ctx.reply('Выберите срок хранения:', { reply_markup: inlineKeyboard });
+    return;
+  }
+  
+  // Обработка кастомного времени (в минутах)
+  if (state && state.step === 'waiting_for_custom_minutes') {
+    const minutes = parseInt(text.trim());
+    if (isNaN(minutes) || minutes <= 0) {
+      await ctx.reply('Введите положительное число минут:');
+      return;
+    }
+    
+    await saveDish(ctx, state.dishName, minutes, chatId, true);
+    return;
+  }
+  
+  // Обработка времени утреннего уведомления
+  if (state && state.step === 'waiting_for_notification_time') {
+    const timeMatch = text.match(/^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/);
+    if (!timeMatch) {
+      await ctx.reply('Неверный формат времени. Используйте формат ЧЧ:ММ (например, 10:00):');
+      return;
+    }
+    
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert({
+          chat_id: chatId,
+          morning_notification_time: text,
+          updated_at: new Date().toISOString()
+        });
+      
+      if (error) {
+        throw error;
+      }
+      
+      userStates.delete(chatId);
+      await ctx.reply(`✅ Время утреннего уведомления установлено: ${text} UTC`, getMainMenu());
+    } catch (error) {
+      console.error('Error saving notification time:', error);
+      await ctx.reply('Ошибка при сохранении настроек. Попробуйте позже.');
+      userStates.delete(chatId);
+    }
+    return;
+  }
+});
+
+// Кнопка "Добавить блюдо"
+bot.hears('➕ Добавить блюдо', async (ctx) => {
   const isAuthorized = await checkAuth(ctx);
   if (!isAuthorized) {
     await ctx.reply('Необходима авторизация. Используйте /start');
     return;
   }
   
-  try {
-    const chatId = ctx.chat.id;
+  const chatId = ctx.chat.id;
+  
+  // Получаем последние 8 уникальных названий блюд пользователя
+  const { data: recentDishes } = await supabase
+    .from('dishes')
+    .select('name')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  
+  const uniqueNames = [...new Set(recentDishes?.map(d => d.name) || [])].slice(0, 8);
+  
+  if (uniqueNames.length > 0) {
+    const buttons = uniqueNames.map(name => [{ text: name, callback_data: `dish_${encodeURIComponent(name)}` }]);
+    buttons.push([{ text: '➕ Добавить новое блюдо', callback_data: 'dish_new' }]);
     
-    // Получаем последние 8 уникальных названий блюд для этого пользователя
-    const { data: recentDishes, error } = await supabase
-      .from('dishes')
-      .select('name')
-      .eq('chat_id', chatId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) throw error;
-
-    // Получаем уникальные названия (последние 8)
-    const uniqueNames = [];
-    const seenNames = new Set();
-    for (const dish of recentDishes || []) {
-      if (!seenNames.has(dish.name)) {
-        seenNames.add(dish.name);
-        uniqueNames.push(dish.name);
-        if (uniqueNames.length >= 8) break;
-      }
-    }
-
-    const userId = ctx.from.id;
-    userStates.set(userId, { dishNames: uniqueNames });
-
-    // Создаем кнопки для выбора блюда
-    const buttons = uniqueNames.map((name, index) => {
-      const displayName = name.length > 30 ? `${name.substring(0, 27)}...` : name;
-      return [{
-        text: displayName,
-        callback_data: `dish_idx_${index}`
-      }];
-    });
-
-    buttons.push([{
-      text: '➕ Добавить новое блюдо',
-      callback_data: 'dish_new'
-    }]);
-
     await ctx.reply('Выберите блюдо или добавьте новое:', {
-      reply_markup: {
-        inline_keyboard: buttons
-      }
+      reply_markup: { inline_keyboard: buttons }
     });
-  } catch (error) {
-    console.error('[BOT] Error loading dishes:', error);
-    ctx.reply('Произошла ошибка при загрузке блюд. Попробуйте позже.');
+  } else {
+    await ctx.reply('Введите название блюда:');
+    userStates.set(chatId, { step: 'waiting_for_dish_name' });
   }
 });
 
-// Обработка выбора блюда
+// Кнопка "Список блюд"
+bot.hears('📦 Список блюд', async (ctx) => {
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
+  const chatId = ctx.chat.id;
+  
+  const { data: dishes, error } = await supabase
+    .from('dishes')
+    .select('id, name, expires_at')
+    .eq('chat_id', chatId)
+    .eq('status', 'active')
+    .order('expires_at', { ascending: true });
+  
+  if (error) {
+    console.error('Error fetching dishes:', error);
+    await ctx.reply('Ошибка при загрузке списка блюд. Попробуйте позже.');
+    return;
+  }
+  
+  if (!dishes || dishes.length === 0) {
+    await ctx.reply('Нет активных блюд.', getMainMenu());
+    return;
+  }
+  
+  const dishesList = dishes.map((dish, index) => {
+    const expiresDate = new Date(dish.expires_at);
+    const expiresTime = formatTime(dish.expires_at);
+    const timeUntil = formatTimeUntil(dish.expires_at);
+    const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+    const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+    const dateStr = `${day}.${month}`;
+    
+    return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
+  }).join('\n\n');
+  
+  const buttons = dishes.map((dish, index) => {
+    const dishName = dish.name.length > 15 
+      ? `${dish.name.substring(0, 12)}...` 
+      : dish.name;
+    const buttonText = `${index + 1}. ${dishName} ❌ Списать`;
+    
+    return [{
+      text: buttonText,
+      callback_data: `remove_${dish.id}`
+    }];
+  });
+  
+  await ctx.reply(`📦 Список блюд:\n\n${dishesList}`, {
+    reply_markup: { inline_keyboard: buttons }
+  });
+});
+
+// Кнопка "Списанные блюда"
+bot.hears('🗑 Списанные блюда', async (ctx) => {
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
+  const chatId = ctx.chat.id;
+  
+  const { data: dishes, error } = await supabase
+    .from('dishes')
+    .select('id, name, status, created_at')
+    .eq('chat_id', chatId)
+    .in('status', ['removed', 'expired'])
+    .order('created_at', { ascending: false })
+    .limit(50);
+  
+  if (error) {
+    console.error('Error fetching removed dishes:', error);
+    await ctx.reply('Ошибка при загрузке списка списанных блюд. Попробуйте позже.');
+    return;
+  }
+  
+  if (!dishes || dishes.length === 0) {
+    await ctx.reply('Нет списанных блюд.', getMainMenu());
+    return;
+  }
+  
+  const dishesList = dishes.map((dish, index) => {
+    const createdDate = new Date(dish.created_at);
+    const day = String(createdDate.getUTCDate()).padStart(2, '0');
+    const month = String(createdDate.getUTCMonth() + 1).padStart(2, '0');
+    const dateStr = `${day}.${month}`;
+    const statusEmoji = dish.status === 'expired' ? '⏰' : '❌';
+    const statusText = dish.status === 'expired' ? 'Истёк' : 'Списано';
+    
+    return `${index + 1}. ${dish.name} ${statusEmoji} ${statusText} (${dateStr})`;
+  }).join('\n');
+  
+  await ctx.reply(`🗑 Списанные блюда:\n\n${dishesList}`, getMainMenu());
+});
+
+// Кнопка "Настройки"
+bot.hears('⚙️ Настройки', async (ctx) => {
+  const isAuthorized = await checkAuth(ctx);
+  if (!isAuthorized) {
+    await ctx.reply('Необходима авторизация. Используйте /start');
+    return;
+  }
+  
+  const chatId = ctx.chat.id;
+  
+  const { data: settings } = await supabase
+    .from('user_settings')
+    .select('morning_notification_time')
+    .eq('chat_id', chatId)
+    .single();
+  
+  const currentTime = settings?.morning_notification_time || '10:00';
+  
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [{ text: '08:00', callback_data: 'time_08:00' }],
+      [{ text: '09:00', callback_data: 'time_09:00' }],
+      [{ text: '10:00', callback_data: 'time_10:00' }],
+      [{ text: '11:00', callback_data: 'time_11:00' }],
+      [{ text: '12:00', callback_data: 'time_12:00' }],
+      [{ text: 'Другое время...', callback_data: 'time_custom' }]
+    ]
+  };
+  
+  await ctx.reply(`⚙️ Настройки\n\nТекущее время утреннего уведомления: ${currentTime} UTC\n\nВыберите новое время:`, {
+    reply_markup: inlineKeyboard
+  });
+});
+
+// Обработка callback query
 bot.action(/^dish_/, async (ctx) => {
   const callbackData = ctx.callbackQuery.data;
-  const userId = ctx.from.id;
+  const chatId = ctx.chat.id;
   
   if (callbackData === 'dish_new') {
-    // Запрашиваем название нового блюда
-    userStates.set(userId, { action: 'waiting_for_dish_name' });
+    await ctx.answerCbQuery();
     await ctx.editMessageText('Введите название блюда:');
-    await ctx.answerCbQuery();
-  } else if (callbackData.startsWith('dish_idx_')) {
-    // Получаем индекс из callback_data
-    const index = parseInt(callbackData.replace('dish_idx_', ''));
-    const state = userStates.get(userId);
-    
-    if (!state || !state.dishNames || !state.dishNames[index]) {
-      await ctx.answerCbQuery('Ошибка: блюдо не найдено');
-      return;
-    }
-    
-    const dishName = state.dishNames[index];
-    
-    // Сохраняем выбранное название и переходим к выбору срока
-    userStates.set(userId, { 
-      action: 'selecting_duration', 
-      dish_name: dishName
-    });
-    
-    await ctx.editMessageText('Выберите срок хранения:', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '12 ч', callback_data: 'duration_12' },
-            { text: '24 ч', callback_data: 'duration_24' }
-          ],
-          [
-            { text: '48 ч', callback_data: 'duration_48' },
-            { text: '72 ч', callback_data: 'duration_72' }
-          ],
-          [
-            { text: 'Другое время...', callback_data: 'duration_custom' }
-          ]
-        ]
-      }
-    });
-    await ctx.answerCbQuery();
-  }
-});
-
-// Middleware для пропуска команд меню - должен быть ПЕРЕД bot.on('text')
-bot.use(async (ctx, next) => {
-  if (ctx.message && ctx.message.text) {
-    const text = ctx.message.text;
-    const menuCommands = ['➕ Добавить блюдо', '📦 Список блюд', '🗑 Списанные блюда', '⚙️ Настройки'];
-    if (menuCommands.includes(text)) {
-      // Пропускаем эти команды - они обрабатываются через bot.hears
-      console.log('[BOT] Menu command in middleware, allowing bot.hears to handle it');
-      return next();
-    }
-  }
-  return next();
-});
-
-// Обработка кнопки "Список блюд"
-bot.hears('📦 Список блюд', async (ctx) => {
-  // Проверка авторизации
-  const isAuthorized = await checkAuth(ctx);
-  if (!isAuthorized) {
-    await ctx.reply('Необходима авторизация. Используйте /start');
+    userStates.set(chatId, { step: 'waiting_for_dish_name' });
     return;
   }
   
-  try {
-    console.log('[BOT] ===== List dishes button clicked =====');
-    console.log('[BOT] User ID:', ctx.from.id);
-    console.log('[BOT] Chat ID:', ctx.chat.id);
-    const chatId = ctx.chat.id;
-    
-    console.log('[BOT] Fetching dishes for chat_id:', chatId);
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at')
-      .eq('status', 'active')
-      .eq('chat_id', chatId)
-      .order('expires_at', { ascending: true });
+  const dishName = decodeURIComponent(callbackData.replace('dish_', ''));
+  userStates.set(chatId, { step: 'waiting_for_duration', dishName });
+  
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [{ text: '12 часов', callback_data: 'duration_12' }],
+      [{ text: '24 часа', callback_data: 'duration_24' }],
+      [{ text: '48 часов', callback_data: 'duration_48' }],
+      [{ text: '72 часа', callback_data: 'duration_72' }],
+      [{ text: 'Другое время...', callback_data: 'duration_custom' }]
+    ]
+  };
+  
+  await ctx.answerCbQuery();
+  await ctx.editMessageText('Выберите срок хранения:', { reply_markup: inlineKeyboard });
+});
 
+bot.action(/^duration_/, async (ctx) => {
+  const callbackData = ctx.callbackQuery.data;
+  const chatId = ctx.chat.id;
+  const state = userStates.get(chatId);
+  
+  if (!state || !state.dishName) {
+    await ctx.answerCbQuery('Ошибка: не найдено название блюда');
+    return;
+  }
+  
+  if (callbackData === 'duration_custom') {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText('Введите время в минутах (например, 30, 90, 120):');
+    userStates.set(chatId, { step: 'waiting_for_custom_minutes', dishName: state.dishName });
+    return;
+  }
+  
+  const hours = parseInt(callbackData.replace('duration_', ''));
+  await ctx.answerCbQuery();
+  await saveDish(ctx, state.dishName, hours, chatId, false);
+});
+
+bot.action(/^time_/, async (ctx) => {
+  const callbackData = ctx.callbackQuery.data;
+  const chatId = ctx.chat.id;
+  
+  if (callbackData === 'time_custom') {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText('Введите время в формате ЧЧ:ММ (например, 10:00):');
+    userStates.set(chatId, { step: 'waiting_for_notification_time' });
+    return;
+  }
+  
+  const time = callbackData.replace('time_', '');
+  
+  try {
+    const { error } = await supabase
+      .from('user_settings')
+      .upsert({
+        chat_id: chatId,
+        morning_notification_time: time,
+        updated_at: new Date().toISOString()
+      });
+    
     if (error) {
-      console.error('[BOT] Error fetching dishes:', error);
       throw error;
     }
+    
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(`✅ Время утреннего уведомления установлено: ${time} UTC`, getMainMenu());
+  } catch (error) {
+    console.error('Error saving notification time:', error);
+    await ctx.answerCbQuery('Ошибка при сохранении настроек');
+  }
+});
 
-    console.log('[BOT] Found dishes:', dishes?.length || 0);
-
-    if (!dishes || dishes.length === 0) {
-      await ctx.reply('Нет активных блюд.', getMainMenu());
+bot.action(/^remove_/, async (ctx) => {
+  const dishId = parseInt(ctx.callbackQuery.data.replace('remove_', ''));
+  const chatId = ctx.chat.id;
+  
+  try {
+    const { error } = await supabase
+      .from('dishes')
+      .update({ status: 'removed' })
+      .eq('id', dishId)
+      .eq('chat_id', chatId);
+    
+    if (error) {
+      throw error;
+    }
+    
+    await ctx.answerCbQuery('✅ Блюдо списано');
+    
+    // Обновляем список
+    const { data: remainingDishes } = await supabase
+      .from('dishes')
+      .select('id, name, expires_at')
+      .eq('chat_id', chatId)
+      .eq('status', 'active')
+      .order('expires_at', { ascending: true });
+    
+    if (!remainingDishes || remainingDishes.length === 0) {
+      await ctx.editMessageText('✅ Блюдо списано.\n\nНет активных блюд.', getMainMenu());
       return;
     }
-
-    // Формируем список блюд с датой и временем (в UTC)
-    const dishesList = dishes.map((dish, index) => {
+    
+    const dishesList = remainingDishes.map((dish, index) => {
       const expiresDate = new Date(dish.expires_at);
       const expiresTime = formatTime(dish.expires_at);
       const timeUntil = formatTimeUntil(dish.expires_at);
-      
-      // Форматируем дату (в UTC)
       const day = String(expiresDate.getUTCDate()).padStart(2, '0');
       const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
       const dateStr = `${day}.${month}`;
       
       return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
     }).join('\n\n');
-
-    // Создаем кнопки для списания (ограничиваем длину текста кнопки)
-    const buttons = dishes.map((dish, index) => {
+    
+    const buttons = remainingDishes.map((dish, index) => {
       const dishName = dish.name.length > 15 
         ? `${dish.name.substring(0, 12)}...` 
         : dish.name;
-      const buttonText = `${index + 1}. ${dishName} ❌ Списать`;
-      
       return [{
-        text: buttonText,
+        text: `${index + 1}. ${dishName} ❌ Списать`,
         callback_data: `remove_${dish.id}`
       }];
     });
-
-    const message = `📦 Список активных блюд:\n\n${dishesList}`;
-
-    console.log('[BOT] Sending dishes list to user');
-    await ctx.reply(message, {
-      reply_markup: {
-        inline_keyboard: buttons
-      }
+    
+    await ctx.editMessageText(`✅ Блюдо списано.\n\n📦 Список блюд:\n\n${dishesList}`, {
+      reply_markup: { inline_keyboard: buttons }
     });
-    console.log('[BOT] Dishes list sent successfully');
   } catch (error) {
-    console.error('[BOT] Error fetching dishes:', error);
-    console.error('[BOT] Error stack:', error.stack);
-    await ctx.reply('Произошла ошибка при загрузке списка блюд. Попробуйте позже.');
+    console.error('Error removing dish:', error);
+    await ctx.answerCbQuery('Ошибка при списании блюда');
   }
-});
-
-// Обработка кнопки "Списанные блюда"
-bot.hears('🗑 Списанные блюда', async (ctx) => {
-  // Проверка авторизации
-  const isAuthorized = await checkAuth(ctx);
-  if (!isAuthorized) {
-    await ctx.reply('Необходима авторизация. Используйте /start');
-    return;
-  }
-  
-  try {
-    const chatId = ctx.chat.id;
-    
-    const { data: dishes, error } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at, status, created_at')
-      .eq('chat_id', chatId)
-      .in('status', ['removed', 'expired'])
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) {
-      console.error('[BOT] Error fetching removed dishes:', error);
-      throw error;
-    }
-
-    if (!dishes || dishes.length === 0) {
-      await ctx.reply('Нет списанных блюд.', getMainMenu());
-      return;
-    }
-
-    // Формируем список списанных блюд
-    const dishesList = dishes.map((dish, index) => {
-      const createdDate = new Date(dish.created_at);
-      const day = String(createdDate.getUTCDate()).padStart(2, '0');
-      const month = String(createdDate.getUTCMonth() + 1).padStart(2, '0');
-      const dateStr = `${day}.${month}`;
-      const statusEmoji = dish.status === 'expired' ? '⏰' : '❌';
-      const statusText = dish.status === 'expired' ? 'Истёк' : 'Списано';
-      
-      return `${index + 1}. ${dish.name} ${statusEmoji} ${statusText} (${dateStr})`;
-    }).join('\n');
-
-    const message = `🗑 Списанные блюда:\n\n${dishesList}`;
-    await ctx.reply(message, getMainMenu());
-  } catch (error) {
-    console.error('[BOT] Error fetching removed dishes:', error);
-    await ctx.reply('Произошла ошибка при загрузке списка списанных блюд. Попробуйте позже.');
-  }
-});
-
-// Обработка кнопки "Настройки"
-bot.hears('⚙️ Настройки', async (ctx) => {
-  // Проверка авторизации
-  const isAuthorized = await checkAuth(ctx);
-  if (!isAuthorized) {
-    await ctx.reply('Необходима авторизация. Используйте /start');
-    return;
-  }
-  
-  try {
-    const chatId = ctx.chat.id;
-    
-    // Получаем настройки пользователя
-    const { data: settings, error } = await supabase
-      .from('user_settings')
-      .select('morning_notification_time')
-      .eq('chat_id', chatId)
-      .single();
-    
-    const currentTime = settings?.morning_notification_time || '10:00';
-    
-    await ctx.reply(
-      `⚙️ Настройки\n\n` +
-      `Время утреннего уведомления: ${currentTime}\n\n` +
-      `Выберите новое время:`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '08:00', callback_data: 'set_time_08:00' },
-              { text: '09:00', callback_data: 'set_time_09:00' },
-              { text: '10:00', callback_data: 'set_time_10:00' }
-            ],
-            [
-              { text: '11:00', callback_data: 'set_time_11:00' },
-              { text: '12:00', callback_data: 'set_time_12:00' },
-              { text: 'Другое...', callback_data: 'set_time_custom' }
-            ]
-          ]
-        }
-      }
-    );
-  } catch (error) {
-    console.error('[BOT] Error loading settings:', error);
-    await ctx.reply('Произошла ошибка при загрузке настроек. Попробуйте позже.');
-  }
-});
-
-// Обработка изменения времени уведомления
-bot.action(/^set_time_/, async (ctx) => {
-  const timeStr = ctx.callbackQuery.data.replace('set_time_', '');
-  const chatId = ctx.chat.id;
-  
-  if (timeStr === 'custom') {
-    userStates.set(ctx.from.id, { action: 'waiting_for_notification_time' });
-    await ctx.editMessageText('Введите время в формате ЧЧ:ММ (например: 09:30):');
-    await ctx.answerCbQuery();
-    return;
-  }
-  
-  try {
-    // Сохраняем настройку
-    const { error } = await supabase
-      .from('user_settings')
-      .upsert({
-        chat_id: chatId,
-        morning_notification_time: timeStr
-      }, {
-        onConflict: 'chat_id'
-      });
-    
-    if (error) throw error;
-    
-    await ctx.editMessageText(`✅ Время утреннего уведомления установлено: ${timeStr}`);
-    await ctx.answerCbQuery();
-  } catch (error) {
-    console.error('[BOT] Error saving settings:', error);
-    await ctx.answerCbQuery('Ошибка при сохранении настроек');
-  }
-});
-
-// Обработка текстового ввода
-bot.on('text', async (ctx) => {
-  const userId = ctx.from.id;
-  const state = userStates.get(userId);
-  const chatId = ctx.chat.id;
-  
-  // Обработка авторизации
-  if (state && state.action === 'waiting_for_username') {
-    const username = ctx.message.text.trim();
-    if (!username || username.length === 0) {
-      await ctx.reply('Имя не может быть пустым. Введите ваше имя:');
-      return;
-    }
-    userStates.set(userId, { action: 'waiting_for_password', username: username });
-    await ctx.reply('Введите пароль (4 цифры):');
-    return;
-  }
-  
-  if (state && state.action === 'waiting_for_password') {
-    const password = ctx.message.text.trim();
-    if (!/^\d{4}$/.test(password)) {
-      await ctx.reply('Пароль должен состоять из 4 цифр. Введите пароль:');
-      return;
-    }
-    
-    try {
-      // Проверяем пользователя в базе
-      const { data: user, error } = await supabase
-        .from('users')
-        .select('id, name, password, chat_id')
-        .eq('name', state.username)
-        .eq('password', password)
-        .single();
-      
-      if (user && !error) {
-        // Обновляем chat_id если нужно
-        if (user.chat_id !== chatId) {
-          await supabase
-            .from('users')
-            .update({ chat_id: chatId })
-            .eq('id', user.id);
-        }
-        
-        authorizedUsers.set(chatId, user);
-        userStates.delete(userId);
-        await ctx.reply(`✅ Авторизация успешна, ${user.name}!`, getMainMenu());
-      } else {
-        await ctx.reply('❌ Неверное имя или пароль. Попробуйте снова.\nВведите ваше имя:');
-        userStates.set(userId, { action: 'waiting_for_username' });
-      }
-    } catch (error) {
-      console.error('[BOT] Auth error:', error);
-      await ctx.reply('Произошла ошибка при авторизации. Попробуйте позже.');
-      userStates.delete(userId);
-    }
-    return;
-  }
-  
-  // Если нет состояния - не обрабатываем
-  if (!state) {
-    return;
-  }
-
-  if (state.action === 'waiting_for_dish_name') {
-    const dishName = ctx.message.text.trim();
-    
-    if (!dishName || dishName.length === 0) {
-      await ctx.reply('Название не может быть пустым. Введите название блюда:');
-      return;
-    }
-
-    // Переходим к выбору срока
-    userStates.set(userId, { 
-      action: 'selecting_duration', 
-      dish_name: dishName
-    });
-
-    await ctx.reply('Выберите срок хранения:', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '12 ч', callback_data: 'duration_12' },
-            { text: '24 ч', callback_data: 'duration_24' }
-          ],
-          [
-            { text: '48 ч', callback_data: 'duration_48' },
-            { text: '72 ч', callback_data: 'duration_72' }
-          ],
-          [
-            { text: 'Другое время...', callback_data: 'duration_custom' }
-          ]
-        ]
-      }
-    });
-  } else if (state.action === 'waiting_for_custom_minutes') {
-    const minutesText = ctx.message.text.trim();
-    const minutes = parseInt(minutesText);
-    
-    if (isNaN(minutes) || minutes <= 0) {
-      await ctx.reply('Пожалуйста, введите положительное число минут (например: 30, 90, 120):');
-      return;
-    }
-
-    // Сохраняем блюдо с указанным временем в минутах
-    await saveDish(ctx, state.dish_name, minutes, userId, true); // true = минуты
-  } else if (state.action === 'waiting_for_notification_time') {
-    const timeText = ctx.message.text.trim();
-    if (!/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(timeText)) {
-      await ctx.reply('Неверный формат времени. Введите время в формате ЧЧ:ММ (например: 09:30):');
-      return;
-    }
-    
-    try {
-      const chatId = ctx.chat.id;
-      const { error } = await supabase
-        .from('user_settings')
-        .upsert({
-          chat_id: chatId,
-          morning_notification_time: timeText
-        }, {
-          onConflict: 'chat_id'
-        });
-      
-      if (error) throw error;
-      
-      userStates.delete(userId);
-      await ctx.reply(`✅ Время утреннего уведомления установлено: ${timeText}`, getMainMenu());
-    } catch (error) {
-      console.error('[BOT] Error saving notification time:', error);
-      await ctx.reply('Произошла ошибка при сохранении времени. Попробуйте позже.');
-    }
-  }
-});
-
-// Обработка выбора срока хранения
-bot.action(/^duration_/, async (ctx) => {
-  const durationStr = ctx.callbackQuery.data.split('_')[1];
-  const userId = ctx.from.id;
-  const state = userStates.get(userId);
-
-  if (!state || !state.dish_name) {
-    await ctx.answerCbQuery('Ошибка: название блюда не найдено');
-    return;
-  }
-
-  if (durationStr === 'custom') {
-    userStates.set(userId, { 
-      action: 'waiting_for_custom_minutes',
-      dish_name: state.dish_name
-    });
-    await ctx.editMessageText('Введите время в минутах (например: 30, 90, 120):');
-    await ctx.answerCbQuery();
-    return;
-  }
-
-  const hours = parseInt(durationStr);
-  if (isNaN(hours) || hours <= 0) {
-    await ctx.answerCbQuery('Ошибка: неверное значение времени');
-    return;
-  }
-
-  await saveDish(ctx, state.dish_name, hours, userId, false); // false = часы
-  await ctx.answerCbQuery();
 });
 
 // Сохранение блюда
@@ -689,15 +617,13 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
     const now = new Date();
     const chatId = ctx.chat.id;
     
-    // Конвертируем время в миллисекунды
     let expiresAt;
     if (isMinutes) {
       expiresAt = new Date(now.getTime() + timeValue * 60 * 1000);
     } else {
       expiresAt = new Date(now.getTime() + timeValue * 60 * 60 * 1000);
     }
-
-    // Сохраняем блюдо
+    
     const { data: dish, error: dishError } = await supabase
       .from('dishes')
       .insert({
@@ -711,601 +637,212 @@ async function saveDish(ctx, dishName, timeValue, userId, isMinutes = false) {
       })
       .select()
       .single();
-
+    
     if (dishError) {
       console.error('Supabase error:', dishError);
       throw dishError;
     }
-
-    // Очищаем состояние
+    
     userStates.delete(userId);
-
-    // Проверяем, не истек ли уже срок (по UTC)
+    
+    // Проверяем, не истек ли уже срок
     const isExpired = new Date(expiresAt) <= now;
-
+    
     if (isExpired) {
-      // Срок уже истек - сразу отправляем уведомление и обновляем статус
-      console.log(`[BOT] Dish "${dishName}" already expired, sending notification immediately`);
-      
-      // Обновляем статус на expired
       await supabase
         .from('dishes')
         .update({ status: 'expired' })
         .eq('id', dish.id);
       
-      // Отправляем уведомление
       const expiredMessage = `❌ Срок истёк: ${dishName}. Требуется списание.`;
       await ctx.reply(expiredMessage);
-      
-      const expiresDateTime = formatDateTime(expiresAt);
-      const message = `✅ Блюдо "${dishName}" добавлено!\n` +
-        `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})\n` +
-        `⚠️ Внимание: срок уже истёк!`;
-      
-      // Проверяем, является ли это callback query или обычное сообщение
-      if (ctx.callbackQuery) {
-        await ctx.editMessageText(message);
-        await ctx.answerCbQuery();
-        await ctx.reply('Выберите действие:', getMainMenu());
-      } else {
-        await ctx.reply(message, getMainMenu());
-      }
+    }
+    
+    const expiresDateTime = formatDateTime(expiresAt);
+    const message = `✅ Блюдо "${dishName}" добавлено!\n` +
+      `Срок хранения: до ${expiresDateTime} UTC (${formatTimeUntil(expiresAt)})`;
+    
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(message);
+      await ctx.reply(message, getMainMenu());
     } else {
-      const expiresDateTime = formatDateTime(expiresAt);
-      const message = `✅ Блюдо "${dishName}" добавлено!\n` +
-        `Срок хранения: до ${expiresDateTime} (${formatTimeUntil(expiresAt)})`;
-      
-      // Проверяем, является ли это callback query или обычное сообщение
-      if (ctx.callbackQuery) {
-        // Для callback query используем editMessageText без клавиатуры, затем отправляем новое сообщение с меню
-        await ctx.editMessageText(message);
-        await ctx.answerCbQuery();
-        await ctx.reply('Выберите действие:', getMainMenu());
-      } else {
-        // Для обычного сообщения просто отправляем ответ с меню
-        await ctx.reply(message, getMainMenu());
-      }
+      await ctx.reply(message, getMainMenu());
     }
   } catch (error) {
     console.error('Error saving dish:', error);
     const errorMessage = 'Произошла ошибка при сохранении блюда. Попробуйте позже.';
-    
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(errorMessage);
-      await ctx.answerCbQuery();
+      await ctx.answerCbQuery(errorMessage);
     } else {
       await ctx.reply(errorMessage);
     }
-    userStates.delete(userId);
   }
 }
 
-// Обработка списания блюда
-bot.action(/^remove_/, async (ctx) => {
-  const dishId = parseInt(ctx.callbackQuery.data.split('_')[1]);
+// ==================== SCHEDULER ====================
 
+// Ежедневные уведомления
+async function sendDailyNotifications() {
+  const now = new Date();
+  const currentHour = now.getUTCHours();
+  const currentMinute = now.getUTCMinutes();
+  
   try {
-    // Получаем информацию о блюде перед удалением
-    const { data: dish, error: fetchError } = await supabase
-      .from('dishes')
-      .select('name')
-      .eq('id', dishId)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    // Обновляем статус
-    const { error } = await supabase
-      .from('dishes')
-      .update({ status: 'removed' })
-      .eq('id', dishId);
-
-    if (error) throw error;
-
-    await ctx.answerCbQuery(`✅ Блюдо "${dish.name}" списано`);
+    const { data: allUsers } = await supabase
+      .from('user_settings')
+      .select('chat_id, morning_notification_time');
     
-    // Получаем обновленный список блюд
-    const chatId = ctx.chat.id;
-    const { data: remainingDishes, error: listError } = await supabase
-      .from('dishes')
-      .select('id, name, expires_at')
-      .eq('status', 'active')
-      .eq('chat_id', chatId)
-      .order('expires_at', { ascending: true });
-
-    if (listError) {
-      // Если ошибка при получении списка, просто обновим текст
-      const originalText = ctx.callbackQuery.message.text;
-      await ctx.editMessageText(originalText + '\n\n✅ Блюдо списано');
-      return;
-    }
-
-    if (!remainingDishes || remainingDishes.length === 0) {
-      await ctx.editMessageText('✅ Все блюда списаны. Нет активных блюд.');
-      return;
-    }
-
-    // Обновляем список блюд
-    const dishesList = remainingDishes.map((dish, index) => {
-      const expiresDate = new Date(dish.expires_at);
-      const expiresTime = formatTime(dish.expires_at);
-      const timeUntil = formatTimeUntil(dish.expires_at);
+    for (const userSetting of allUsers || []) {
+      const [settingHour, settingMinute] = (userSetting.morning_notification_time || '10:00').split(':').map(Number);
+      const isTimeMatch = currentHour === settingHour && currentMinute >= settingMinute && currentMinute < settingMinute + 15;
       
-      const day = String(expiresDate.getUTCDate()).padStart(2, '0');
-      const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
-      const dateStr = `${day}.${month}`;
-      
-      return `${index + 1}. ${dish.name}\n   📅 ${dateStr} ${expiresTime} — ${timeUntil}`;
-    }).join('\n\n');
-
-    const buttons = remainingDishes.map((dish, index) => {
-      const dishName = dish.name.length > 15 
-        ? `${dish.name.substring(0, 12)}...` 
-        : dish.name;
-      const buttonText = `${index + 1}. ${dishName} ❌ Списать`;
-      
-      return [{
-        text: buttonText,
-        callback_data: `remove_${dish.id}`
-      }];
-    });
-
-    const message = `📦 Список активных блюд:\n\n${dishesList}`;
-    await ctx.editMessageText(message, {
-      reply_markup: {
-        inline_keyboard: buttons
+      if (isTimeMatch) {
+        const todayStartUTC = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
+        const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
+        
+        const { data: dishes } = await supabase
+          .from('dishes')
+          .select('id, name, expires_at')
+          .eq('status', 'active')
+          .eq('notified_day', false)
+          .eq('chat_id', userSetting.chat_id)
+          .gte('expires_at', todayStartUTC.toISOString())
+          .lt('expires_at', todayEndUTC.toISOString());
+        
+        if (dishes && dishes.length > 0) {
+          const messages = dishes.map(d =>
+            `⚠ Сегодня истекает срок хранения: ${d.name} до ${formatTime(d.expires_at)} UTC`
+          );
+          await bot.telegram.sendMessage(userSetting.chat_id, messages.join('\n'));
+          
+          const dishIds = dishes.map(d => d.id);
+          await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
+        }
       }
-    });
+    }
   } catch (error) {
-    console.error('[BOT] Error removing dish:', error);
-    await ctx.answerCbQuery('Ошибка при списании блюда');
+    console.error('[SCHEDULER] Error in daily notifications:', error);
   }
-});
+}
 
-// Обработка ошибок
-bot.catch((err, ctx) => {
-  console.error('[BOT] Error:', err);
-  ctx.reply('Произошла ошибка. Попробуйте позже.');
-});
-
-// ==================== SCHEDULER ФУНКЦИИ ====================
-
-// Объединенная функция для всех уведомлений
-async function sendAllNotifications() {
-  const results = {
-    daily: { sent: 0, errors: 0 },
-    oneHour: { sent: 0, errors: 0 },
-    expired: { sent: 0, errors: 0 }
-  };
-
+// Уведомления за 1 час
+async function sendOneHourNotifications() {
   try {
     const now = new Date();
-    const currentHour = now.getUTCHours();
-    const currentMinute = now.getUTCMinutes();
+    const minTime = new Date(now.getTime() + 55 * 60000);
+    const maxTime = new Date(now.getTime() + 65 * 60000);
     
-    console.log(`[SCHEDULER] ========================================`);
-    console.log(`[SCHEDULER] Starting notification check`);
-    console.log(`[SCHEDULER] Current time (UTC): ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
-    console.log(`[SCHEDULER] ISO time: ${now.toISOString()}`);
-    console.log(`[SCHEDULER] ========================================`);
-
-    // 1. Ежедневное уведомление (проверяем настройки каждого пользователя)
-    console.log('[SCHEDULER] Checking daily notifications');
-    try {
-      // Получаем всех пользователей с настройками
-      const { data: allUsers, error: usersError } = await supabase
-        .from('user_settings')
-        .select('chat_id, morning_notification_time');
-      
-      if (usersError) {
-        console.error('[SCHEDULER] Error fetching user settings:', usersError);
-      } else {
-        console.log(`[SCHEDULER] Found ${allUsers?.length || 0} users with settings`);
-        // Проверяем каждого пользователя
-        for (const userSetting of allUsers || []) {
-          const [settingHour, settingMinute] = (userSetting.morning_notification_time || '10:00').split(':').map(Number);
-          console.log(`[SCHEDULER] Checking user ${userSetting.chat_id}: setting time ${settingHour}:${String(settingMinute).padStart(2, '0')}, current ${currentHour}:${String(currentMinute).padStart(2, '0')}`);
-          
-          // Проверяем, наступило ли время уведомления для этого пользователя (в пределах 15 минут)
-          const isTimeMatch = currentHour === settingHour && currentMinute >= settingMinute && currentMinute < settingMinute + 15;
-          console.log(`[SCHEDULER] Time match: ${isTimeMatch} (current: ${currentHour}:${String(currentMinute).padStart(2, '0')}, setting: ${settingHour}:${String(settingMinute).padStart(2, '0')})`);
-          
-          if (isTimeMatch) {
-            console.log(`[SCHEDULER] Sending daily notification to ${userSetting.chat_id} at ${userSetting.morning_notification_time}`);
-            
-            // Сегодня в UTC
-            const todayStartUTC = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
-            const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
-
-            console.log(`[SCHEDULER] Querying dishes for chat ${userSetting.chat_id}`);
-            console.log(`[SCHEDULER] Date range: ${todayStartUTC.toISOString()} to ${todayEndUTC.toISOString()}`);
-            
-            const { data: dishes, error } = await supabase
-              .from('dishes')
-              .select('id, name, expires_at, chat_id')
-              .eq('status', 'active')
-              .eq('notified_day', false)
-              .eq('chat_id', userSetting.chat_id)
-              .gte('expires_at', todayStartUTC.toISOString())
-              .lt('expires_at', todayEndUTC.toISOString());
-
-            if (error) {
-              console.error(`[SCHEDULER] Error fetching daily dishes for ${userSetting.chat_id}:`, error);
-              results.daily.errors++;
-            } else {
-              console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring today for ${userSetting.chat_id}`);
-              if (dishes && dishes.length > 0) {
-                try {
-                  const messages = dishes.map(d => 
-                    `⚠ Сегодня истекает срок хранения: ${d.name || 'Неизвестное блюдо'} до ${formatTime(d.expires_at)}`
-                  );
-                  await bot.telegram.sendMessage(userSetting.chat_id, messages.join('\n'));
-                  console.log(`[SCHEDULER] Daily notification sent to ${userSetting.chat_id}`);
-                  results.daily.sent++;
-                  
-                  const dishIds = dishes.map(d => d.id);
-                  await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
-                } catch (err) {
-                  console.error(`[SCHEDULER] Error sending daily notification to ${userSetting.chat_id}:`, err.message);
-                  results.daily.errors++;
-                }
-              }
-            }
-          }
-        }
+    const { data: dishes } = await supabase
+      .from('dishes')
+      .select('id, name, chat_id')
+      .eq('status', 'active')
+      .eq('notified_one_hour', false)
+      .gte('expires_at', minTime.toISOString())
+      .lte('expires_at', maxTime.toISOString());
+    
+    if (dishes && dishes.length > 0) {
+      const dishesByChat = {};
+      for (const dish of dishes) {
+        if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
+        dishesByChat[dish.chat_id].push(dish);
       }
       
-      // Если нет настроек, используем дефолтное время 10:00
-      if (!allUsers || allUsers.length === 0) {
-        console.log('[SCHEDULER] No user settings found, using default 10:00');
-        const isDefaultTime = currentHour === 10 && currentMinute < 15;
-        console.log(`[SCHEDULER] Default time check: ${isDefaultTime} (current: ${currentHour}:${String(currentMinute).padStart(2, '0')})`);
-        if (isDefaultTime) {
-          console.log('[SCHEDULER] Checking daily notifications (default 10:00)');
-          // Сегодня в МСК - конвертируем в UTC для сравнения с БД
-          const todayStartMoscow = new Date(nowMoscow.getFullYear(), nowMoscow.getMonth(), nowMoscow.getUTCDate());
-          const todayStartUTC = new Date(todayStartMoscow.getTime() - 3 * 60 * 60 * 1000); // МСК -> UTC
-          const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000);
-
-          const { data: dishes, error } = await supabase
-            .from('dishes')
-            .select('id, name, expires_at, chat_id')
-            .eq('status', 'active')
-            .eq('notified_day', false)
-            .gte('expires_at', todayStartUTC.toISOString())
-            .lt('expires_at', todayEndUTC.toISOString());
-
-          if (error) {
-            console.error('[SCHEDULER] Error fetching daily dishes:', error);
-            results.daily.errors++;
-          } else if (dishes && dishes.length > 0) {
-            console.log(`[SCHEDULER] Found ${dishes.length} dishes expiring today`);
-            
-            const dishesByChat = {};
-            for (const dish of dishes) {
-              if (!dish.chat_id) continue;
-              if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
-              dishesByChat[dish.chat_id].push(dish);
-            }
-
-            for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-              try {
-                const messages = userDishes.map(d => 
-                  `⚠ Сегодня истекает срок хранения: ${d.name || 'Неизвестное блюдо'} до ${formatTime(d.expires_at)}`
-                );
-                await bot.telegram.sendMessage(chatId, messages.join('\n'));
-                console.log(`[SCHEDULER] Daily notification sent to ${chatId}`);
-                results.daily.sent++;
-                
-                const dishIds = userDishes.map(d => d.id);
-                await supabase.from('dishes').update({ notified_day: true }).in('id', dishIds);
-              } catch (err) {
-                console.error(`[SCHEDULER] Error sending daily notification to ${chatId}:`, err.message);
-                results.daily.errors++;
-              }
-            }
-          }
-        }
+      for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
+        const messages = userDishes.map(d => `⏳ Через 1 час истекает: ${d.name}`);
+        await bot.telegram.sendMessage(chatId, messages.join('\n'));
+        
+        const dishIds = userDishes.map(d => d.id);
+        await supabase.from('dishes').update({ notified_one_hour: true }).in('id', dishIds);
       }
-    } catch (err) {
-      console.error('[SCHEDULER] Error in daily notifications:', err);
-      results.daily.errors++;
     }
-
-    // 2. Уведомление за 1 час до истечения
-    console.log('[SCHEDULER] Checking one hour notifications');
-    try {
-      // ИСПРАВЛЕНИЕ: используем реальное UTC время напрямую
-      const nowUTC1h = new Date(); // Просто реальное текущее UTC
-      
-      // Проверяем блюда, которые истекают РОВНО через 1 час (с допуском ±5 минут)
-      // То есть: expires_at должен быть между (now + 55 минут) и (now + 65 минут)
-      const minTime = new Date(nowUTC1h.getTime() + 55 * 60000); // 55 минут от сейчас
-      const maxTime = new Date(nowUTC1h.getTime() + 65 * 60000); // 65 минут от сейчас
-      
-      console.log(`[SCHEDULER] Querying dishes expiring in ~1 hour (55-65 minutes from now)`);
-      console.log(`[SCHEDULER] Current UTC: ${nowUTC1h.toISOString()}`);
-      console.log(`[SCHEDULER] Time range: ${minTime.toISOString()} to ${maxTime.toISOString()}`);
-      
-      const { data: dishes, error } = await supabase
-        .from('dishes')
-        .select('id, name, expires_at, chat_id')
-        .eq('status', 'active')
-        .eq('notified_one_hour', false)
-        .gte('expires_at', minTime.toISOString())
-        .lte('expires_at', maxTime.toISOString());
-      
-      // Дополнительная диагностика: показываем все блюда в этом диапазоне
-      if (!error && dishes) {
-        console.log(`[SCHEDULER] Found ${dishes.length} dishes in 1-hour range (55-65 minutes)`);
-        dishes.forEach(d => {
-          const expiresAt = new Date(d.expires_at);
-          const diffMs = expiresAt - nowUTC1h;
-          const diffMinutes = Math.floor(diffMs / 60000);
-          const diffHours = (diffMinutes / 60).toFixed(1);
-          console.log(`[SCHEDULER]   - "${d.name}": expires_at=${d.expires_at}, diff=${diffMinutes} minutes (${diffHours} hours) from now`);
-        });
-      }
-
-      if (error) {
-        console.error('[SCHEDULER] Error fetching one hour dishes:', error);
-        results.oneHour.errors++;
-      } else {
-        console.log(`[SCHEDULER] Found ${dishes?.length || 0} dishes expiring in 1 hour`);
-        if (dishes && dishes.length > 0) {
-          const dishesByChat = {};
-          for (const dish of dishes) {
-            if (!dish.chat_id) continue;
-            if (!dishesByChat[dish.chat_id]) dishesByChat[dish.chat_id] = [];
-            dishesByChat[dish.chat_id].push(dish);
-          }
-
-          for (const [chatId, userDishes] of Object.entries(dishesByChat)) {
-            try {
-              const messages = userDishes.map(d => 
-                `⏳ Через 1 час истекает: ${d.name || 'Неизвестное блюдо'}`
-              );
-              await bot.telegram.sendMessage(chatId, messages.join('\n'));
-              console.log(`[SCHEDULER] One hour notification sent to ${chatId}`);
-              results.oneHour.sent++;
-              
-              const dishIds = userDishes.map(d => d.id);
-              await supabase.from('dishes').update({ notified_one_hour: true }).in('id', dishIds);
-            } catch (err) {
-              console.error(`[SCHEDULER] Error sending one hour notification to ${chatId}:`, err.message);
-              results.oneHour.errors++;
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[SCHEDULER] Error in one hour notifications:', err);
-      results.oneHour.errors++;
-    }
-
-    // 3. Уведомления об истекших блюдах - используем отдельный скрипт
-    console.log('[SCHEDULER] Checking expired dishes (using checkExpired module)');
-    try {
-      const { checkExpiredDishes } = require('./checkExpired');
-      await checkExpiredDishes();
-      results.expired.sent = 1; // Скрипт сам логирует результаты
-    } catch (err) {
-      console.error('[SCHEDULER] Error calling checkExpired:', err);
-      console.error('[SCHEDULER] Error stack:', err.stack);
-      results.expired.errors++;
-    }
-
-    console.log('[SCHEDULER] ========================================');
-    console.log('[SCHEDULER] Summary:');
-    console.log(`[SCHEDULER] Daily notifications: ${results.daily.sent} sent, ${results.daily.errors} errors`);
-    console.log(`[SCHEDULER] One hour notifications: ${results.oneHour.sent} sent, ${results.oneHour.errors} errors`);
-    console.log(`[SCHEDULER] Expired notifications: ${results.expired.sent} sent, ${results.expired.errors} errors`);
-    console.log('[SCHEDULER] ========================================');
-    return results;
-
   } catch (error) {
-    console.error('[SCHEDULER] Fatal error in sendAllNotifications:', error);
-    throw error;
+    console.error('[SCHEDULER] Error in one hour notifications:', error);
   }
 }
 
-// Запуск scheduler каждые 15 минут
+// Запуск scheduler
 let schedulerInterval = null;
 
 function startScheduler() {
-  // Проверяем, не запущен ли уже scheduler
   if (schedulerInterval) {
-    console.log('[SCHEDULER] ⚠️ Scheduler already running (interval ID: ' + schedulerInterval + '), skipping...');
+    console.log('[SCHEDULER] ⚠️ Scheduler already running');
     return;
   }
   
-  console.log('[SCHEDULER] ========================================');
   console.log('[SCHEDULER] Starting scheduler...');
-  console.log('[SCHEDULER] ========================================');
   
   // Запускаем сразу
-  console.log('[SCHEDULER] Running initial notification check...');
-  sendAllNotifications().catch(error => {
-    console.error('[SCHEDULER] Initial run error:', error);
-    console.error('[SCHEDULER] Error stack:', error.stack);
+  sendDailyNotifications();
+  sendOneHourNotifications();
+  
+  // Загружаем checkExpired модуль
+  const { checkExpiredDishes } = require('./checkExpired');
+  checkExpiredDishes(bot, supabase).catch(err => {
+    console.error('[SCHEDULER] Error in initial checkExpired:', err);
   });
   
   // Затем каждую минуту
   schedulerInterval = setInterval(async () => {
     try {
-      console.log('[SCHEDULER] ========================================');
-      console.log('[SCHEDULER] Scheduled run triggered (every 1 minute)');
-      console.log('[SCHEDULER] ========================================');
-      await sendAllNotifications();
+      sendDailyNotifications();
+      sendOneHourNotifications();
+      await checkExpiredDishes(bot, supabase);
     } catch (error) {
       console.error('[SCHEDULER] Interval error:', error);
-      console.error('[SCHEDULER] Error stack:', error.stack);
     }
-  }, 60 * 1000); // 1 минута
+  }, 60 * 1000);
   
-  console.log('[SCHEDULER] ✅ Scheduler started successfully');
-  console.log('[SCHEDULER] Will run every 1 minute');
-  console.log('[SCHEDULER] Interval ID:', schedulerInterval);
-  console.log('[SCHEDULER] ========================================');
+  console.log('[SCHEDULER] ✅ Scheduler started (runs every 1 minute)');
 }
 
-// HTTP сервер для health check (Render)
-const http = require('http');
-const PORT = process.env.PORT || 4000;
+// ==================== HTTP SERVER ====================
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'oliviebot' }));
+    res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
   } else {
     res.writeHead(404);
-    res.end('Not found');
+    res.end('Not Found');
   }
 });
 
-// Запуск бота через polling
+// ==================== ЗАПУСК БОТА ====================
+
 async function startBot() {
   try {
     console.log('[BOT] Initializing bot...');
     
-    // Проверяем токен перед началом работы
-    if (!process.env.BOT_TOKEN) {
-      console.error('[BOT] ❌ ERROR: BOT_TOKEN is not set in environment variables!');
-      console.error('[BOT] Please set BOT_TOKEN in Render Dashboard → Environment');
-      process.exit(1);
-    }
+    const botInfo = await bot.telegram.getMe();
+    console.log(`[BOT] ✅ Bot token is valid. Bot username: @${botInfo.username}`);
     
-    // Проверяем валидность токена через getMe
-    try {
-      const botInfo = await bot.telegram.getMe();
-      console.log(`[BOT] ✅ Bot token is valid. Bot username: @${botInfo.username}`);
-    } catch (error) {
-      if (error.response && error.response.error_code === 401) {
-        console.error('[BOT] ❌ ERROR: Invalid bot token (401 Unauthorized)');
-        console.error('[BOT] Please check BOT_TOKEN in Render Dashboard → Environment');
-        console.error('[BOT] Make sure the token is correct and saved');
-        process.exit(1);
-      } else {
-        console.error('[BOT] ❌ ERROR: Could not verify bot token:', error.message);
-        process.exit(1);
-      }
-    }
-    
-    // Запускаем HTTP сервер для health check
     server.listen(PORT, () => {
       console.log(`[SERVER] Health check server started on port ${PORT}`);
-      console.log(`[SERVER] Health check: http://localhost:${PORT}/health`);
     });
     
-    // Запускаем polling с обработкой ошибок конфликта
     console.log('[BOT] Starting bot with polling...');
-    console.log('[BOT] Note: If you see 409 error, another bot instance is running polling');
-    console.log('[BOT] Check Render Dashboard - ensure only ONE service is running');
-    let pollingStarted = false;
-    let retryCount = 0;
-    const maxRetries = 5;
+    await bot.launch({
+      dropPendingUpdates: true,
+      allowedUpdates: ['message', 'callback_query']
+    });
     
-    while (!pollingStarted && retryCount < maxRetries) {
-      try {
-        console.log(`[BOT] Attempting to start polling (attempt ${retryCount + 1}/${maxRetries})...`);
-        await bot.launch({
-          dropPendingUpdates: true, // Игнорируем старые обновления
-          allowedUpdates: ['message', 'callback_query'] // Только нужные типы обновлений
-        });
-        pollingStarted = true;
-        console.log('[BOT] ✅ Bot started successfully with polling');
-      } catch (error) {
-        retryCount++;
-        if (error.response && error.response.error_code === 409) {
-          console.error(`[BOT] ❌ Conflict error (attempt ${retryCount}/${maxRetries}): Another instance is running`);
-          if (retryCount < maxRetries) {
-            const waitTime = retryCount * 10; // Увеличиваем задержку: 10, 20, 30, 40, 50 секунд
-            console.log(`[BOT] Waiting ${waitTime} seconds before retry...`);
-            await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-          } else {
-            console.error('[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.');
-            console.error('[BOT] ============================================');
-            console.error('[BOT] DIAGNOSTIC INFORMATION:');
-            console.error('[BOT] ============================================');
-            console.error('[BOT] Error: 409 Conflict - Another bot instance is using polling');
-            console.error('[BOT] This means another process is calling getUpdates with the same token');
-            console.error('[BOT] Possible causes:');
-            console.error('[BOT] 1. Multiple services running on Render with the same BOT_TOKEN');
-            console.error('[BOT] 2. Another deployment/service is still running');
-            console.error('[BOT] 3. Local development instance is running');
-            console.error('[BOT] ============================================');
-            console.error('[BOT] SOLUTION:');
-            console.error('[BOT] 1. Go to Render Dashboard → Services');
-            console.error('[BOT] 2. Check if there are multiple services with the same bot');
-            console.error('[BOT] 3. Stop ALL other services except ONE');
-            console.error('[BOT] 4. Wait 30 seconds, then restart this service');
-            console.error('[BOT] ============================================');
-            console.error('[BOT] This instance will continue running scheduler only.');
-            
-            // Запускаем scheduler даже если polling не запустился
-            console.log('[SCHEDULER] Starting scheduler anyway (another instance may be running)...');
-            startScheduler();
-            
-            // Не завершаем процесс - scheduler будет работать
-            console.log('[BOT] ⚠️ Bot polling failed, but scheduler is running.');
-            console.log('[BOT] ⚠️ To fix: Stop other bot instances and restart this service.');
-            return; // Выходим из функции, но процесс продолжает работать
-          }
-        } else {
-          throw error;
-        }
-      }
-    }
+    console.log('[BOT] ✅ Bot started successfully with polling');
     
-    // Запускаем scheduler
-    console.log('[SCHEDULER] Starting scheduler...');
     startScheduler();
     
     console.log('[BOT] Bot is ready and polling for updates');
   } catch (error) {
     console.error('[BOT] ❌ Error starting bot:', error);
-    console.error('[BOT] Error stack:', error.stack);
-    
-    // Если это не ошибка 409, запускаем scheduler и завершаем процесс
-    if (!error.response || error.response.error_code !== 409) {
-      console.log('[SCHEDULER] Starting scheduler before exit...');
-      startScheduler();
-      // Даем scheduler время запуститься
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      process.exit(1);
-    } else {
-      // Для ошибки 409 - продолжаем работу со scheduler
-      console.error('[BOT] ============================================');
-      console.error('[BOT] DIAGNOSTIC INFORMATION:');
-      console.error('[BOT] ============================================');
-      console.error('[BOT] Error: 409 Conflict - Another bot instance is using polling');
-      console.error('[BOT] This means another process is calling getUpdates with the same token');
-      console.error('[BOT] Possible causes:');
-      console.error('[BOT] 1. Multiple services running on Render with the same BOT_TOKEN');
-      console.error('[BOT] 2. Another deployment/service is still running');
-      console.error('[BOT] 3. Local development instance is running');
-      console.error('[BOT] ============================================');
-      console.error('[BOT] SOLUTION:');
-      console.error('[BOT] 1. Go to Render Dashboard → Services');
-      console.error('[BOT] 2. Check if there are multiple services with the same bot');
-      console.error('[BOT] 3. Stop ALL other services except ONE');
-      console.error('[BOT] 4. Wait 30 seconds, then restart this service');
-      console.error('[BOT] ============================================');
-      console.log('[SCHEDULER] Starting scheduler (409 error - another instance running)...');
-      startScheduler();
-      console.log('[BOT] ⚠️ Bot polling failed due to conflict, but scheduler is running.');
-      console.log('[BOT] ⚠️ To fix: Stop other bot instances and restart this service.');
-      // Не завершаем процесс - scheduler будет работать
-    }
+    startScheduler(); // Запускаем scheduler даже если бот не запустился
+    process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.once('SIGINT', () => {
   console.log('[BOT] Shutting down...');
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-  }
+  if (schedulerInterval) clearInterval(schedulerInterval);
   server.close();
   bot.stop('SIGINT');
   process.exit(0);
@@ -1313,9 +850,7 @@ process.once('SIGINT', () => {
 
 process.once('SIGTERM', () => {
   console.log('[BOT] Shutting down...');
-  if (schedulerInterval) {
-    clearInterval(schedulerInterval);
-  }
+  if (schedulerInterval) clearInterval(schedulerInterval);
   server.close();
   bot.stop('SIGTERM');
   process.exit(0);
@@ -1323,4 +858,3 @@ process.once('SIGTERM', () => {
 
 // Запускаем бота
 startBot();
-
