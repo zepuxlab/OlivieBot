@@ -1437,6 +1437,10 @@ async function startBot() {
         });
         pollingStarted = true;
         console.log('[BOT] ✅ Bot started successfully with polling');
+        
+        // Запускаем scheduler после успешного запуска polling
+        console.log('[SCHEDULER] Starting scheduler after successful polling start...');
+        startScheduler();
       } catch (error) {
         retryCount++;
         if (error.response && error.response.error_code === 409) {
