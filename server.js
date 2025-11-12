@@ -300,8 +300,11 @@ bot.on("text", async (ctx) => {
     const uniqueNames = [...new Set(recentDishes?.map(d => d.name) || [])].slice(0, 8);
     
     if (uniqueNames.length > 0) {
-      const buttons = uniqueNames.map(name => [
-        { text: name, callback_data: `dish_${encodeURIComponent(name)}` }
+      // Сохраняем названия в state для доступа по индексу
+      userStates.set(chatId, { ...userStates.get(chatId), dishNames: uniqueNames });
+      
+      const buttons = uniqueNames.map((name, index) => [
+        { text: name, callback_data: `dish_idx_${index}` }
       ]);
       buttons.push([{ text: "🍽️ Добавить новое блюдо", callback_data: "dish_new" }]);
       
@@ -401,6 +404,7 @@ bot.on("text", async (ctx) => {
 bot.action(/^dish_/, async (ctx) => {
   const callbackData = ctx.callbackQuery.data;
   const chatId = ctx.chat.id;
+  const state = userStates.get(chatId);
   
   if (callbackData === "dish_new") {
     await ctx.answerCbQuery();
@@ -409,8 +413,22 @@ bot.action(/^dish_/, async (ctx) => {
     return;
   }
   
-  const dishName = decodeURIComponent(callbackData.replace("dish_", ""));
-  userStates.set(chatId, { step: "dish_duration", dishName });
+  // Получаем название по индексу
+  if (!callbackData.startsWith("dish_idx_")) {
+    await ctx.answerCbQuery("❌ Ошибка: неверный формат данных");
+    return;
+  }
+  
+  const index = parseInt(callbackData.replace("dish_idx_", ""));
+  const dishNames = state?.dishNames || [];
+  
+  if (isNaN(index) || index < 0 || index >= dishNames.length) {
+    await ctx.answerCbQuery("❌ Ошибка: неверный индекс блюда");
+    return;
+  }
+  
+  const dishName = dishNames[index];
+  userStates.set(chatId, { ...state, step: "dish_duration", dishName });
   
   const inlineKeyboard = {
     inline_keyboard: [
