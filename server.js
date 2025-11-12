@@ -723,8 +723,28 @@ setInterval(checkExpired, 60 * 1000);
 setInterval(morningSummary, 60 * 1000);
 
 // ==================== START POLLING ====================
-bot.launch();
-console.log("✅ BOT RUNNING");
+async function startBot() {
+  try {
+    // Запускаем polling с обработкой ошибок
+    await bot.launch({
+      dropPendingUpdates: true
+    });
+    
+    console.log("✅ BOT RUNNING");
+  } catch (error) {
+    if (error.response?.error_code === 409) {
+      console.error("[BOT] ❌ Conflict: Another bot instance is running");
+      console.error("[BOT] Check Render Dashboard - ensure only ONE service is running");
+      console.error("[BOT] Or wait a few minutes and restart the service");
+      process.exit(1);
+    } else {
+      console.error("[BOT] Error starting bot:", error);
+      process.exit(1);
+    }
+  }
+}
+
+startBot();
 
 // Render health check server
 http.createServer((req, res) => {
