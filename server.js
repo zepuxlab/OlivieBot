@@ -114,25 +114,29 @@ bot.on("text", async (ctx) => {
     if (!/^\d{4}$/.test(text)) return ctx.reply("PIN должен быть 4 цифры:");
     
     // Проверяем, существует ли пользователь с таким именем
-    const { data: existingUser } = await supabase
+    const { data: existingUser, error: userError } = await supabase
       .from("users")
       .select("id, name, password, chat_id")
       .eq("name", state.name)
       .single();
     
-    if (!existingUser) {
+    if (userError || !existingUser) {
       // Пользователя нет - отказываем в авторизации
       userStates.delete(chatId);
       return ctx.reply("❌ Пользователь не найден. Проверьте имя и попробуйте снова. /start");
     }
     
     // Пользователь существует - проверяем пароль
-    if (existingUser.password !== text) {
+    // Приводим оба значения к строке и обрезаем пробелы для надежности
+    const dbPassword = String(existingUser.password || "").trim();
+    const inputPassword = String(text).trim();
+    
+    if (dbPassword !== inputPassword) {
       return ctx.reply("❌ Неверный PIN. Попробуйте снова:");
     }
     
-    // Пароль правильный - обновляем chat_id если изменился
-    if (existingUser.chat_id !== chatId) {
+    // Пароль правильный - обновляем chat_id (если NULL или изменился)
+    if (!existingUser.chat_id || existingUser.chat_id !== chatId) {
       await supabase
         .from("users")
         .update({ chat_id: chatId })
