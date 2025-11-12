@@ -12,12 +12,19 @@ function mainMenu() {
   return {
     reply_markup: {
       keyboard: [
-        ["➕ Добавить блюдо"],
-        ["📦 Список блюд", "🗑 Списанные блюда"],
+        ["🍽️ Добавить блюдо"],
+        ["🥘 Список блюд", "🗑 Списанные блюда"],
       ],
       resize_keyboard: true
     }
   };
+}
+
+// Конвертация UTC в МСК (UTC+3)
+function toMoscowTime(date) {
+  const msk = new Date(date);
+  msk.setUTCHours(msk.getUTCHours() + 3);
+  return msk;
 }
 
 // Форматирование времени до истечения
@@ -52,14 +59,14 @@ function formatTimeUntil(expiresAt) {
   return `через ${parts.join(' ')}`;
 }
 
-// Форматирование даты и времени
+// Форматирование даты и времени (в МСК для отображения)
 function formatDateTime(date) {
-  const d = new Date(date);
+  const d = toMoscowTime(date);
   const day = String(d.getUTCDate()).padStart(2, '0');
   const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   const hours = String(d.getUTCHours()).padStart(2, '0');
   const minutes = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${day}.${month} ${hours}:${minutes}`;
+  return `${day}.${month} ${hours}:${minutes} МСК`;
 }
 
 async function isAuth(ctx) {
@@ -128,7 +135,7 @@ bot.on("text", async (ctx) => {
   }
 
   // Меню:
-  if (text === "➕ Добавить блюдо") {
+  if (text === "🍽️ Добавить блюдо") {
     if (!(await isAuth(ctx))) return ctx.reply("Сначала /start");
     
     // Получаем последние использованные названия
@@ -145,7 +152,7 @@ bot.on("text", async (ctx) => {
       const buttons = uniqueNames.map(name => [
         { text: name, callback_data: `dish_${encodeURIComponent(name)}` }
       ]);
-      buttons.push([{ text: "➕ Добавить новое блюдо", callback_data: "dish_new" }]);
+      buttons.push([{ text: "🍽️ Добавить новое блюдо", callback_data: "dish_new" }]);
       
       return ctx.reply("Выберите блюдо или добавьте новое:", {
         reply_markup: { inline_keyboard: buttons }
@@ -156,7 +163,7 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  if (text === "📦 Список блюд") {
+  if (text === "🥘 Список блюд") {
     if (!(await isAuth(ctx))) return ctx.reply("Сначала /start");
 
     const { data } = await supabase
@@ -169,15 +176,15 @@ bot.on("text", async (ctx) => {
     if (!data || data.length === 0) return ctx.reply("Нет активных блюд.", mainMenu());
 
     const list = data.map((d, i) => {
-      const expiresDate = new Date(d.expires_at);
+      const expiresDate = toMoscowTime(d.expires_at);
       const day = String(expiresDate.getUTCDate()).padStart(2, '0');
       const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
       const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
       const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
-      const dateStr = `${day}.${month} ${hours}:${minutes}`;
+      const dateStr = `${day}.${month} ${hours}:${minutes} МСК`;
       const timeUntil = formatTimeUntil(d.expires_at);
       
-      return `${i + 1}. ${d.name}\n   📅 ${dateStr} UTC — ${timeUntil}`;
+      return `${i + 1}. ${d.name}\n   🕐 ${dateStr} — ${timeUntil}`;
     }).join("\n\n");
 
     const buttons = data.map(d => [{
@@ -185,7 +192,7 @@ bot.on("text", async (ctx) => {
       callback_data: `rm_${d.id}`
     }]);
 
-    return ctx.reply(`📦 Список блюд:\n\n${list}`, { reply_markup: { inline_keyboard: buttons }});
+    return ctx.reply(`🥘 Список блюд:\n\n${list}`, { reply_markup: { inline_keyboard: buttons }});
   }
 
   if (text === "🗑 Списанные блюда") {
@@ -196,41 +203,41 @@ bot.on("text", async (ctx) => {
       .select("*")
       .eq("chat_id", chatId)
       .in("status", ["removed", "expired"])
-      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(50);
 
     if (!data || data.length === 0) return ctx.reply("Нет списанных блюд.", mainMenu());
 
-    // Получаем имена пользователей для отображения
-    const userIds = [...new Set(data.map(d => d.chat_id))];
-    const { data: users } = await supabase
+    // Получаем имя текущего пользователя из таблицы users по chat_id
+    const { data: currentUser } = await supabase
       .from("users")
-      .select("chat_id, name")
-      .in("chat_id", userIds);
-    
-    const usersMap = {};
-    if (users) {
-      for (const u of users) {
-        usersMap[u.chat_id] = u.name;
-      }
-    }
+      .select("name")
+      .eq("chat_id", chatId)
+      .single();
+
+    const userName = currentUser?.name || `ID:${chatId}`;
 
     const list = data.map((d, i) => {
-      const statusEmoji = d.status === "expired" ? "⏰" : "❌";
+      const statusEmoji = d.status === "expired" ? "🍳" : "❌";
       const statusText = d.status === "expired" ? "Истёк" : "Списано";
       
-      // Для списанных используем updated_at (когда списали), для истекших - expires_at
-      const dateToShow = d.status === "removed" ? d.updated_at : d.expires_at;
-      const date = new Date(dateToShow);
+      // Для списанных используем updated_at если есть, иначе created_at (для старых записей)
+      // Для истекших используем expires_at
+      let dateToShow;
+      if (d.status === "removed") {
+        dateToShow = d.updated_at || d.created_at; // Если updated_at нет, используем created_at
+      } else {
+        dateToShow = d.expires_at;
+      }
+      
+      const date = toMoscowTime(dateToShow);
       const day = String(date.getUTCDate()).padStart(2, '0');
       const month = String(date.getUTCMonth() + 1).padStart(2, '0');
       const hours = String(date.getUTCHours()).padStart(2, '0');
       const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-      const dateStr = `${day}.${month} ${hours}:${minutes}`;
+      const dateStr = `${day}.${month} ${hours}:${minutes} МСК`;
       
-      const userName = usersMap[d.chat_id] || `ID:${d.chat_id}`;
-      
-      return `${i + 1}. ${d.name} ${statusEmoji} ${statusText}\n   📅 ${dateStr} UTC | 👤 ${userName}`;
+      return `${i + 1}. ${d.name} ${statusEmoji} ${statusText}\n   🕐 ${dateStr} | 👨‍🍳 ${userName}`;
     }).join("\n\n");
 
     return ctx.reply(`🗑 Списанные блюда:\n\n${list}`, mainMenu());
@@ -286,7 +293,7 @@ bot.action(/^dur_/, async (ctx) => {
     // Обработка тестовой кнопки
     if (callbackData === "dur_test") {
       expiresAt = new Date(now.getTime() + 1 * 60 * 1000); // 1 минута
-      messageText = `✅ Тестовое блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} UTC (${formatTimeUntil(expiresAt.toISOString())})\n\n🧪 Уведомление придет через 1 минуту!`;
+      messageText = `✅ Тестовое блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} (${formatTimeUntil(expiresAt.toISOString())})\n\n🧪 Уведомление придет через 1 минуту!`;
     } else {
       // Обработка часов (24, 48, 72)
       const hoursStr = callbackData.replace("dur_", "");
@@ -298,7 +305,7 @@ bot.action(/^dur_/, async (ctx) => {
       }
       
       expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000);
-      messageText = `✅ Блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} UTC (${formatTimeUntil(expiresAt.toISOString())})`;
+      messageText = `✅ Блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} (${formatTimeUntil(expiresAt.toISOString())})`;
     }
     
     // Сохранение в базу
@@ -360,24 +367,24 @@ bot.action(/^rm_/, async (ctx) => {
     return;
   }
   
-  const list = remainingDishes.map((d, i) => {
-    const expiresDate = new Date(d.expires_at);
-    const day = String(expiresDate.getUTCDate()).padStart(2, '0');
-    const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
-    const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
-    const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
-    const dateStr = `${day}.${month} ${hours}:${minutes}`;
-    const timeUntil = formatTimeUntil(d.expires_at);
-    
-    return `${i + 1}. ${d.name}\n   📅 ${dateStr} UTC — ${timeUntil}`;
-  }).join("\n\n");
+    const list = remainingDishes.map((d, i) => {
+      const expiresDate = toMoscowTime(d.expires_at);
+      const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+      const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+      const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+      const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+      const dateStr = `${day}.${month} ${hours}:${minutes} МСК`;
+      const timeUntil = formatTimeUntil(d.expires_at);
+      
+      return `${i + 1}. ${d.name}\n   🕐 ${dateStr} — ${timeUntil}`;
+    }).join("\n\n");
   
   const buttons = remainingDishes.map(d => [{
     text: `❌ ${d.name.length > 20 ? d.name.substring(0, 17) + '...' : d.name} Списать`,
     callback_data: `rm_${d.id}`
   }]);
   
-  await ctx.editMessageText(`✅ Блюдо списано.\n\n📦 Список блюд:\n\n${list}`, {
+  await ctx.editMessageText(`✅ Блюдо списано.\n\n🥘 Список блюд:\n\n${list}`, {
     reply_markup: { inline_keyboard: buttons }
   });
 });
@@ -398,7 +405,6 @@ async function checkExpired() {
       try {
         await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
         await supabase.from("dishes").update({ status: "expired" }).eq("id", d.id);
-        console.log(`[CHECK_EXPIRED] Sent notification for ${d.name} to ${d.chat_id}`);
       } catch (error) {
         console.error(`[CHECK_EXPIRED] Error sending to ${d.chat_id}:`, error.message);
       }
@@ -425,7 +431,6 @@ async function checkExpired() {
           await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
           // Обновляем updated_at чтобы не спамить
           await supabase.from("dishes").update({ updated_at: new Date().toISOString() }).eq("id", d.id);
-          console.log(`[CHECK_EXPIRED] Sent repeat notification for ${d.name} to ${d.chat_id}`);
         } catch (error) {
           console.error(`[CHECK_EXPIRED] Error sending repeat notification to ${d.chat_id}:`, error.message);
         }
@@ -434,8 +439,123 @@ async function checkExpired() {
   }
 }
 
+// ==================== MORNING SUMMARY ====================
+async function morningSummary() {
+  const now = new Date();
+  // Конвертируем в МСК для проверки времени
+  const mskTime = toMoscowTime(now);
+  const mskHour = mskTime.getUTCHours();
+  const mskMinute = mskTime.getUTCMinutes();
+  
+  // Проверяем, наступило ли 10:00 МСК (в пределах 1 минуты)
+  if (mskHour !== 10 || mskMinute !== 0) return;
+  
+  try {
+    // Получаем всех пользователей
+    const { data: allUsers } = await supabase
+      .from("users")
+      .select("chat_id, name");
+    
+    if (!allUsers || allUsers.length === 0) return;
+    
+    // Для каждого пользователя формируем сводку
+    for (const user of allUsers) {
+      const chatId = user.chat_id;
+      
+      // 1. Активные блюда
+      const { data: activeDishes } = await supabase
+        .from("dishes")
+        .select("name, expires_at")
+        .eq("chat_id", chatId)
+        .eq("status", "active")
+        .order("expires_at");
+      
+      // 2. Блюда, которые истекают сегодня
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
+      const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+      
+      const { data: todayExpiring } = await supabase
+        .from("dishes")
+        .select("name, expires_at")
+        .eq("chat_id", chatId)
+        .eq("status", "active")
+        .gte("expires_at", todayStart.toISOString())
+        .lt("expires_at", todayEnd.toISOString());
+      
+      // 3. Блюда, списанные вчера
+      const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+      const yesterdayEnd = todayStart;
+      
+      const { data: yesterdayRemoved } = await supabase
+        .from("dishes")
+        .select("name, updated_at, created_at")
+        .eq("chat_id", chatId)
+        .eq("status", "removed")
+        .gte("updated_at", yesterdayStart.toISOString())
+        .lt("updated_at", yesterdayEnd.toISOString());
+      
+      // Формируем сообщение
+      const parts = [];
+      parts.push("🌅 Утренняя сводка (10:00 МСК)\n");
+      
+      // Активные блюда
+      if (activeDishes && activeDishes.length > 0) {
+        parts.push(`\n🥘 Активные блюда (${activeDishes.length}):`);
+        activeDishes.forEach((d, i) => {
+          const expiresDate = toMoscowTime(d.expires_at);
+          const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+          const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+          const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+          const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+          const timeUntil = formatTimeUntil(d.expires_at);
+          parts.push(`${i + 1}. ${d.name} — до ${day}.${month} ${hours}:${minutes} МСК (${timeUntil})`);
+        });
+      } else {
+        parts.push("\n🥘 Активные блюда: нет");
+      }
+      
+      // Истекают сегодня
+      if (todayExpiring && todayExpiring.length > 0) {
+        parts.push(`\n🍳 Истекают сегодня (${todayExpiring.length}):`);
+        todayExpiring.forEach((d, i) => {
+          const expiresDate = toMoscowTime(d.expires_at);
+          const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+          const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+          parts.push(`${i + 1}. ${d.name} — до ${hours}:${minutes} МСК`);
+        });
+      } else {
+        parts.push("\n🍳 Истекают сегодня: нет");
+      }
+      
+      // Списанные вчера
+      if (yesterdayRemoved && yesterdayRemoved.length > 0) {
+        parts.push(`\n🗑 Списанные вчера (${yesterdayRemoved.length}):`);
+        yesterdayRemoved.forEach((d, i) => {
+          const removedDate = toMoscowTime(d.updated_at || d.created_at);
+          const hours = String(removedDate.getUTCHours()).padStart(2, '0');
+          const minutes = String(removedDate.getUTCMinutes()).padStart(2, '0');
+          parts.push(`${i + 1}. ${d.name} — ${hours}:${minutes} МСК`);
+        });
+      } else {
+        parts.push("\n🗑 Списанные вчера: нет");
+      }
+      
+      const message = parts.join("\n");
+      
+      try {
+        await bot.telegram.sendMessage(chatId, message);
+      } catch (error) {
+        console.error(`[MORNING_SUMMARY] Error sending to ${chatId}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error('[MORNING_SUMMARY] Error:', error);
+  }
+}
+
 // ==================== RUN SCHEDULER ====================
 setInterval(checkExpired, 60 * 1000);
+setInterval(morningSummary, 60 * 1000);
 
 // ==================== START POLLING ====================
 bot.launch();
