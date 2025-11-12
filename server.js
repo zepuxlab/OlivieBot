@@ -112,8 +112,34 @@ bot.on("text", async (ctx) => {
 
   if (state?.step === "pin") {
     if (!/^\d{4}$/.test(text)) return ctx.reply("PIN должен быть 4 цифры:");
-    await supabase.from("users").insert({ name: state.name, password: text, chat_id: chatId });
-    authorized.set(chatId, { name: state.name });
+    
+    // Проверяем, существует ли пользователь с таким именем
+    const { data: existingUser } = await supabase
+      .from("users")
+      .select("id, name, password, chat_id")
+      .eq("name", state.name)
+      .single();
+    
+    if (!existingUser) {
+      // Пользователя нет - отказываем в авторизации
+      userStates.delete(chatId);
+      return ctx.reply("❌ Пользователь не найден. Проверьте имя и попробуйте снова. /start");
+    }
+    
+    // Пользователь существует - проверяем пароль
+    if (existingUser.password !== text) {
+      return ctx.reply("❌ Неверный PIN. Попробуйте снова:");
+    }
+    
+    // Пароль правильный - обновляем chat_id если изменился
+    if (existingUser.chat_id !== chatId) {
+      await supabase
+        .from("users")
+        .update({ chat_id: chatId })
+        .eq("id", existingUser.id);
+    }
+    
+    authorized.set(chatId, { name: existingUser.name });
     userStates.delete(chatId);
     return ctx.reply("✅ Авторизация выполнена!", mainMenu());
   }
