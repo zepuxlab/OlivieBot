@@ -196,21 +196,42 @@ bot.on("text", async (ctx) => {
       .select("*")
       .eq("chat_id", chatId)
       .in("status", ["removed", "expired"])
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
       .limit(50);
 
     if (!data || data.length === 0) return ctx.reply("Нет списанных блюд.", mainMenu());
 
+    // Получаем имена пользователей для отображения
+    const userIds = [...new Set(data.map(d => d.chat_id))];
+    const { data: users } = await supabase
+      .from("users")
+      .select("chat_id, name")
+      .in("chat_id", userIds);
+    
+    const usersMap = {};
+    if (users) {
+      for (const u of users) {
+        usersMap[u.chat_id] = u.name;
+      }
+    }
+
     const list = data.map((d, i) => {
-      const createdDate = new Date(d.created_at);
-      const day = String(createdDate.getUTCDate()).padStart(2, '0');
-      const month = String(createdDate.getUTCMonth() + 1).padStart(2, '0');
-      const dateStr = `${day}.${month}`;
       const statusEmoji = d.status === "expired" ? "⏰" : "❌";
       const statusText = d.status === "expired" ? "Истёк" : "Списано";
       
-      return `${i + 1}. ${d.name} ${statusEmoji} ${statusText} (${dateStr})`;
-    }).join("\n");
+      // Для списанных используем updated_at (когда списали), для истекших - expires_at
+      const dateToShow = d.status === "removed" ? d.updated_at : d.expires_at;
+      const date = new Date(dateToShow);
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const hours = String(date.getUTCHours()).padStart(2, '0');
+      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+      const dateStr = `${day}.${month} ${hours}:${minutes}`;
+      
+      const userName = usersMap[d.chat_id] || `ID:${d.chat_id}`;
+      
+      return `${i + 1}. ${d.name} ${statusEmoji} ${statusText}\n   📅 ${dateStr} UTC | 👤 ${userName}`;
+    }).join("\n\n");
 
     return ctx.reply(`🗑 Списанные блюда:\n\n${list}`, mainMenu());
   }
@@ -314,7 +335,15 @@ bot.action(/^rm_/, async (ctx) => {
   const id = ctx.callbackQuery.data.replace("rm_", "");
   const chatId = ctx.chat.id;
   
-  await supabase.from("dishes").update({ status: "removed" }).eq("id", id).eq("chat_id", chatId);
+  // Получаем имя пользователя для записи
+  const user = authorized.get(chatId);
+  const userName = user?.name || `ID:${chatId}`;
+  
+  await supabase.from("dishes").update({ 
+    status: "removed",
+    updated_at: new Date().toISOString()
+  }).eq("id", id).eq("chat_id", chatId);
+  
   await ctx.answerCbQuery("✅ Списано");
   
   // Обновляем список
