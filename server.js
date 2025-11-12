@@ -185,9 +185,7 @@ bot.on("text", async (ctx) => {
       callback_data: `rm_${d.id}`
     }]);
 
-    return ctx.reply(`📦 Список блюд:\n\n${list}`, {
-      reply_markup: { inline_keyboard: buttons }
-    });
+    return ctx.reply(`📦 Список блюд:\n\n${list}`, { reply_markup: { inline_keyboard: buttons }});
   }
 
   if (text === "🗑 Списанные блюда") {
@@ -310,7 +308,7 @@ bot.action(/^dur_/, async (ctx) => {
   }
 });
 
-// Удаление блюда
+// ==================== REMOVE DISH ====================
 bot.action(/^rm_/, async (ctx) => {
   const id = ctx.callbackQuery.data.replace("rm_", "");
   const chatId = ctx.chat.id;
@@ -372,7 +370,6 @@ async function checkExpired() {
 }
 
 // ==================== RUN SCHEDULER ====================
-// Проверяем истекшие блюда каждую минуту
 setInterval(checkExpired, 60 * 1000);
 
 // ==================== START POLLING ====================
