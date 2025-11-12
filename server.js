@@ -298,8 +298,9 @@ bot.action(/^dur_/, async (ctx) => {
     userStates.delete(chatId);
     await ctx.answerCbQuery("✅ Готово");
     
-    // Обновление сообщения и отправка главного меню
+    // Обновление сообщения (без клавиатуры, так как это editMessageText)
     await ctx.editMessageText(messageText);
+    // Отправляем новое сообщение с главным меню
     await ctx.reply("Блюдо добавлено!", mainMenu());
     
   } catch (error) {
