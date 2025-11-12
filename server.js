@@ -326,7 +326,8 @@ bot.action(/^rm_/, async (ctx) => {
     .order("expires_at");
   
   if (!remainingDishes || remainingDishes.length === 0) {
-    await ctx.editMessageText("✅ Блюдо списано.\n\nНет активных блюд.", mainMenu());
+    await ctx.editMessageText("✅ Блюдо списано.\n\nНет активных блюд.");
+    await ctx.reply("Нет активных блюд.", mainMenu());
     return;
   }
   
