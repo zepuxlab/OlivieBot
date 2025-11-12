@@ -1,4 +1,3 @@
-require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const { createClient } = require("@supabase/supabase-js");
 const http = require("http");
