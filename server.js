@@ -428,69 +428,8 @@ setInterval(morningSummary, 60 * 1000);
 setInterval(oneHourNotification, 60 * 1000);
 
 // ==================== START POLLING ====================
-async function startBot() {
-  try {
-    console.log("[BOT] Initializing bot...");
-    
-    // Проверяем токен
-    const botInfo = await bot.telegram.getMe();
-    console.log(`[BOT] ✅ Bot token is valid. Bot username: @${botInfo.username}`);
-    
-    // Удаляем webhook если есть
-    try {
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      console.log("[BOT] ✅ Webhook deleted");
-    } catch (error) {
-      console.log("[BOT] Webhook deletion:", error.message);
-    }
-    
-    // Запускаем polling с retry
-    let retryCount = 0;
-    const maxRetries = 3;
-    
-    while (retryCount < maxRetries) {
-      try {
-        console.log(`[BOT] Starting polling (attempt ${retryCount + 1}/${maxRetries})...`);
-        await bot.launch({
-          dropPendingUpdates: true,
-          allowedUpdates: ['message', 'callback_query']
-        });
-        console.log("✅ BOT RUNNING");
-        return; // Успешно запустился
-      } catch (error) {
-        if (error.response?.error_code === 409) {
-          retryCount++;
-          console.error(`[BOT] ❌ Conflict error (attempt ${retryCount}/${maxRetries}): Another instance is running`);
-          
-          if (retryCount < maxRetries) {
-            // Пытаемся еще раз удалить webhook
-            try {
-              await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-              await new Promise(resolve => setTimeout(resolve, 5000)); // Ждем 5 секунд
-            } catch (e) {
-              console.log("[BOT] Could not delete webhook:", e.message);
-            }
-          } else {
-            console.error("[BOT] ❌ Max retries reached. Please ensure only one bot instance is running.");
-            console.error("[BOT] Check Render Dashboard - ensure only ONE service is running");
-            // Продолжаем работу со scheduler даже если polling не запустился
-          }
-        } else {
-          throw error; // Другая ошибка - пробрасываем дальше
-        }
-      }
-    }
-    
-    // Если не удалось запустить polling, продолжаем работу (scheduler будет работать)
-    console.log("[BOT] ⚠️ Polling failed, but scheduler will continue running");
-    
-  } catch (error) {
-    console.error("[BOT] ❌ Error starting bot:", error);
-    // Продолжаем работу - scheduler все равно запустится
-  }
-}
-
-startBot();
+bot.launch();
+console.log("✅ BOT RUNNING");
 
 // Render health check server
 http.createServer((req, res) => {
