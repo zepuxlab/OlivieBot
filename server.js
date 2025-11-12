@@ -120,34 +120,11 @@ bot.on("text", async (ctx) => {
         [{ text: "24 часа", callback_data: "dur_24" }],
         [{ text: "48 часов", callback_data: "dur_48" }],
         [{ text: "72 часа", callback_data: "dur_72" }],
-        [{ text: "Указать своё", callback_data: "dur_custom" }],
         [{ text: "🧪 Тест (1 минута)", callback_data: "dur_test" }]
       ]
     };
     
     return ctx.reply("Выберите срок хранения:", { reply_markup: inlineKeyboard });
-  }
-
-  // Кастомное время в минутах
-  if (state?.step === "custom_minutes") {
-    const minutes = parseInt(text.trim());
-    if (isNaN(minutes) || minutes <= 0) {
-      return ctx.reply("Введите положительное число минут:");
-    }
-    
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + minutes * 60 * 1000).toISOString();
-    
-    await supabase.from("dishes").insert({
-      chat_id: chatId,
-      name: state.dishName,
-      expires_at: expiresAt,
-      status: "active"
-    });
-    
-    userStates.delete(chatId);
-    const expiresDateTime = formatDateTime(expiresAt);
-    return ctx.reply(`✅ Блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${expiresDateTime} UTC (${formatTimeUntil(expiresAt)})`, mainMenu());
   }
 
   // Меню:
@@ -263,7 +240,6 @@ bot.action(/^dish_/, async (ctx) => {
       [{ text: "24 часа", callback_data: "dur_24" }],
       [{ text: "48 часов", callback_data: "dur_48" }],
       [{ text: "72 часа", callback_data: "dur_72" }],
-      [{ text: "Указать своё", callback_data: "dur_custom" }],
       [{ text: "🧪 Тест (1 минута)", callback_data: "dur_test" }]
     ]
   };
@@ -280,13 +256,6 @@ bot.action(/^dur_/, async (ctx) => {
   
   if (!state || !state.dishName) {
     await ctx.answerCbQuery("Ошибка: не найдено название блюда");
-    return;
-  }
-  
-  if (callbackData === "dur_custom") {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText("Введите время в минутах (например, 30, 90, 120):");
-    userStates.set(chatId, { step: "custom_minutes", dishName: state.dishName });
     return;
   }
   
