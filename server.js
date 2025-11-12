@@ -98,6 +98,127 @@ bot.start(async (ctx) => {
   ctx.reply("Введите имя:");
 });
 
+// ==================== TEST COMMANDS ====================
+bot.command("test_notifications", async (ctx) => {
+  if (!(await isAuth(ctx))) return ctx.reply("Сначала /start");
+  
+  await ctx.reply("🔍 Проверяю уведомления об истекших блюдах...");
+  
+  try {
+    await checkExpired();
+    await ctx.reply("✅ Проверка завершена. Уведомления отправлены (если были истекшие блюда).");
+  } catch (error) {
+    await ctx.reply(`❌ Ошибка при проверке: ${error.message}`);
+  }
+});
+
+bot.command("test_summary", async (ctx) => {
+  if (!(await isAuth(ctx))) return ctx.reply("Сначала /start");
+  
+  await ctx.reply("🔍 Формирую утреннюю сводку...");
+  
+  try {
+    // Вызываем morningSummary без проверки времени
+    const now = new Date();
+    const chatId = ctx.chat.id;
+    
+    // Получаем данные текущего пользователя
+    const { data: currentUser } = await supabase
+      .from("users")
+      .select("chat_id, name")
+      .eq("chat_id", chatId)
+      .single();
+    
+    if (!currentUser) {
+      return ctx.reply("❌ Пользователь не найден.");
+    }
+    
+    // 1. Активные блюда
+    const { data: activeDishes } = await supabase
+      .from("dishes")
+      .select("name, expires_at")
+      .eq("chat_id", chatId)
+      .eq("status", "active")
+      .order("expires_at");
+    
+    // 2. Блюда, которые истекают сегодня
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    
+    const { data: todayExpiring } = await supabase
+      .from("dishes")
+      .select("name, expires_at")
+      .eq("chat_id", chatId)
+      .eq("status", "active")
+      .gte("expires_at", todayStart.toISOString())
+      .lt("expires_at", todayEnd.toISOString());
+    
+    // 3. Блюда, списанные вчера
+    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayEnd = todayStart;
+    
+    const { data: yesterdayRemoved } = await supabase
+      .from("dishes")
+      .select("name, updated_at, created_at")
+      .eq("chat_id", chatId)
+      .eq("status", "removed")
+      .gte("updated_at", yesterdayStart.toISOString())
+      .lt("updated_at", yesterdayEnd.toISOString());
+    
+    // Формируем сообщение
+    const parts = [];
+    parts.push("🌅 Тестовая утренняя сводка\n");
+    
+    // Активные блюда
+    if (activeDishes && activeDishes.length > 0) {
+      parts.push(`\n🥘 Активные блюда (${activeDishes.length}):`);
+      activeDishes.forEach((d, i) => {
+        const expiresDate = toMoscowTime(d.expires_at);
+        const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+        const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+        const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+        const timeUntil = formatTimeUntil(d.expires_at);
+        parts.push(`${i + 1}. ${d.name} — до ${day}.${month} ${hours}:${minutes} МСК (${timeUntil})`);
+      });
+    } else {
+      parts.push("\n🥘 Активные блюда: нет");
+    }
+    
+    // Истекают сегодня
+    if (todayExpiring && todayExpiring.length > 0) {
+      parts.push(`\n🍳 Истекают сегодня (${todayExpiring.length}):`);
+      todayExpiring.forEach((d, i) => {
+        const expiresDate = toMoscowTime(d.expires_at);
+        const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+        parts.push(`${i + 1}. ${d.name} — до ${hours}:${minutes} МСК`);
+      });
+    } else {
+      parts.push("\n🍳 Истекают сегодня: нет");
+    }
+    
+    // Списанные вчера
+    if (yesterdayRemoved && yesterdayRemoved.length > 0) {
+      parts.push(`\n🗑 Списанные вчера (${yesterdayRemoved.length}):`);
+      yesterdayRemoved.forEach((d, i) => {
+        const removedDate = toMoscowTime(d.updated_at || d.created_at);
+        const hours = String(removedDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(removedDate.getUTCMinutes()).padStart(2, '0');
+        parts.push(`${i + 1}. ${d.name} — ${hours}:${minutes} МСК`);
+      });
+    } else {
+      parts.push("\n🗑 Списанные вчера: нет");
+    }
+    
+    const message = parts.join("\n");
+    await ctx.reply(message);
+    
+  } catch (error) {
+    await ctx.reply(`❌ Ошибка при формировании сводки: ${error.message}`);
+  }
+});
+
 // ==================== TEXT HANDLER ====================
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
@@ -433,7 +554,14 @@ async function checkExpired() {
   if (activeExpired && activeExpired.length > 0) {
     for (const d of activeExpired) {
       try {
-        await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
+        const expiresDate = toMoscowTime(d.expires_at);
+        const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+        const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+        const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+        const dateStr = `${day}.${month} ${hours}:${minutes} МСК`;
+        
+        await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}\nСроком до ${dateStr}\nТребуется списание.`);
         await supabase.from("dishes").update({ status: "expired" }).eq("id", d.id);
       } catch (error) {
         console.error(`[CHECK_EXPIRED] Error sending to ${d.chat_id}:`, error.message);
@@ -458,7 +586,14 @@ async function checkExpired() {
       
       if (hoursSinceUpdate >= 1) {
         try {
-          await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
+          const expiresDate = toMoscowTime(d.expires_at);
+          const day = String(expiresDate.getUTCDate()).padStart(2, '0');
+          const month = String(expiresDate.getUTCMonth() + 1).padStart(2, '0');
+          const hours = String(expiresDate.getUTCHours()).padStart(2, '0');
+          const minutes = String(expiresDate.getUTCMinutes()).padStart(2, '0');
+          const dateStr = `${day}.${month} ${hours}:${minutes} МСК`;
+          
+          await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}\nСроком до ${dateStr}\nТребуется списание.`);
           // Обновляем updated_at чтобы не спамить
           await supabase.from("dishes").update({ updated_at: new Date().toISOString() }).eq("id", d.id);
         } catch (error) {
