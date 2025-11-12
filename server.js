@@ -255,48 +255,59 @@ bot.action(/^dur_/, async (ctx) => {
   const state = userStates.get(chatId);
   
   if (!state || !state.dishName) {
-    await ctx.answerCbQuery("Ошибка: не найдено название блюда");
+    await ctx.answerCbQuery("❌ Ошибка: не найдено название блюда");
     return;
   }
   
-  if (callbackData === "dur_test") {
-    // Тестовая кнопка - 1 минута
+  try {
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 1 * 60 * 1000).toISOString();
+    let expiresAt;
+    let messageText;
     
-    await supabase.from("dishes").insert({
+    // Обработка тестовой кнопки
+    if (callbackData === "dur_test") {
+      expiresAt = new Date(now.getTime() + 1 * 60 * 1000); // 1 минута
+      messageText = `✅ Тестовое блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} UTC (${formatTimeUntil(expiresAt.toISOString())})\n\n🧪 Уведомление придет через 1 минуту!`;
+    } else {
+      // Обработка часов (24, 48, 72)
+      const hoursStr = callbackData.replace("dur_", "");
+      const hours = parseInt(hoursStr);
+      
+      if (isNaN(hours) || ![24, 48, 72].includes(hours)) {
+        await ctx.answerCbQuery("❌ Неверное значение времени");
+        return;
+      }
+      
+      expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000);
+      messageText = `✅ Блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${formatDateTime(expiresAt.toISOString())} UTC (${formatTimeUntil(expiresAt.toISOString())})`;
+    }
+    
+    // Сохранение в базу
+    const { error } = await supabase.from("dishes").insert({
       chat_id: chatId,
       name: state.dishName,
-      expires_at: expiresAt,
+      expires_at: expiresAt.toISOString(),
       status: "active"
     });
     
-    userStates.delete(chatId);
-    await ctx.answerCbQuery();
+    if (error) {
+      console.error("Error saving dish:", error);
+      await ctx.answerCbQuery("❌ Ошибка при сохранении");
+      return;
+    }
     
-    const expiresDateTime = formatDateTime(expiresAt);
-    await ctx.editMessageText(`✅ Тестовое блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${expiresDateTime} UTC (${formatTimeUntil(expiresAt)})\n\n🧪 Уведомление придет через 1 минуту!`);
-    await ctx.reply("Тестовое блюдо добавлено!", mainMenu());
-    return;
+    // Очистка состояния
+    userStates.delete(chatId);
+    await ctx.answerCbQuery("✅ Готово");
+    
+    // Обновление сообщения и отправка главного меню
+    await ctx.editMessageText(messageText);
+    await ctx.reply("Блюдо добавлено!", mainMenu());
+    
+  } catch (error) {
+    console.error("Error in dur_ handler:", error);
+    await ctx.answerCbQuery("❌ Произошла ошибка");
   }
-  
-  const hours = parseInt(callbackData.replace("dur_", ""));
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000).toISOString();
-  
-  await supabase.from("dishes").insert({
-    chat_id: chatId,
-    name: state.dishName,
-    expires_at: expiresAt,
-    status: "active"
-  });
-  
-  userStates.delete(chatId);
-  await ctx.answerCbQuery();
-  
-  const expiresDateTime = formatDateTime(expiresAt);
-  await ctx.editMessageText(`✅ Блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${expiresDateTime} UTC (${formatTimeUntil(expiresAt)})`);
-  await ctx.reply("Блюдо добавлено!", mainMenu());
 });
 
 // Удаление блюда
