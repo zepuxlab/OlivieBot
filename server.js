@@ -371,61 +371,9 @@ async function checkExpired() {
   }
 }
 
-// ==================== MORNING SUMMARY ====================
-async function morningSummary() {
-  const now = new Date();
-  const isMorningUTC = now.getUTCHours() === 10 && now.getUTCMinutes() === 0;
-  if (!isMorningUTC) return;
-
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getUTCDate());
-  const todayEnd = new Date(todayStart.getTime() + 24 * 3600 * 1000);
-  
-  const { data } = await supabase
-    .from("dishes")
-    .select("chat_id, name")
-    .eq("status", "active")
-    .gte("expires_at", todayStart.toISOString())
-    .lt("expires_at", todayEnd.toISOString());
-
-  if (!data || data.length === 0) return;
-
-  const grouped = {};
-  for (const d of data) (grouped[d.chat_id] ??= []).push(d.name);
-
-  for (const chatId in grouped) {
-    const list = grouped[chatId].map(x => `• ${x}`).join("\n");
-    await bot.telegram.sendMessage(chatId, `⚠ Сегодня истекает срок хранения:\n${list}`);
-  }
-}
-
-// ==================== ONE HOUR NOTIFICATION ====================
-async function oneHourNotification() {
-  const now = new Date();
-  const minTime = new Date(now.getTime() + 55 * 60000);
-  const maxTime = new Date(now.getTime() + 65 * 60000);
-
-  const { data } = await supabase
-    .from("dishes")
-    .select("id, name, chat_id")
-    .eq("status", "active")
-    .gte("expires_at", minTime.toISOString())
-    .lte("expires_at", maxTime.toISOString());
-
-  if (!data || data.length === 0) return;
-
-  const grouped = {};
-  for (const d of data) (grouped[d.chat_id] ??= []).push(d.name);
-
-  for (const chatId in grouped) {
-    const list = grouped[chatId].map(x => `• ${x}`).join("\n");
-    await bot.telegram.sendMessage(chatId, `⏳ Через 1 час истекает:\n${list}`);
-  }
-}
-
 // ==================== RUN SCHEDULER ====================
+// Проверяем истекшие блюда каждую минуту
 setInterval(checkExpired, 60 * 1000);
-setInterval(morningSummary, 60 * 1000);
-setInterval(oneHourNotification, 60 * 1000);
 
 // ==================== START POLLING ====================
 bot.launch();
