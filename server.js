@@ -117,11 +117,11 @@ bot.on("text", async (ctx) => {
     
     const inlineKeyboard = {
       inline_keyboard: [
-        [{ text: "12 часов", callback_data: "dur_12" }],
         [{ text: "24 часа", callback_data: "dur_24" }],
         [{ text: "48 часов", callback_data: "dur_48" }],
         [{ text: "72 часа", callback_data: "dur_72" }],
-        [{ text: "Другое время...", callback_data: "dur_custom" }]
+        [{ text: "Указать своё", callback_data: "dur_custom" }],
+        [{ text: "🧪 Тест (1 минута)", callback_data: "dur_test" }]
       ]
     };
     
@@ -260,11 +260,11 @@ bot.action(/^dish_/, async (ctx) => {
   
   const inlineKeyboard = {
     inline_keyboard: [
-      [{ text: "12 часов", callback_data: "dur_12" }],
       [{ text: "24 часа", callback_data: "dur_24" }],
       [{ text: "48 часов", callback_data: "dur_48" }],
       [{ text: "72 часа", callback_data: "dur_72" }],
-      [{ text: "Другое время...", callback_data: "dur_custom" }]
+      [{ text: "Указать своё", callback_data: "dur_custom" }],
+      [{ text: "🧪 Тест (1 минута)", callback_data: "dur_test" }]
     ]
   };
   
@@ -287,6 +287,27 @@ bot.action(/^dur_/, async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.editMessageText("Введите время в минутах (например, 30, 90, 120):");
     userStates.set(chatId, { step: "custom_minutes", dishName: state.dishName });
+    return;
+  }
+  
+  if (callbackData === "dur_test") {
+    // Тестовая кнопка - 1 минута
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 1 * 60 * 1000).toISOString();
+    
+    await supabase.from("dishes").insert({
+      chat_id: chatId,
+      name: state.dishName,
+      expires_at: expiresAt,
+      status: "active"
+    });
+    
+    userStates.delete(chatId);
+    await ctx.answerCbQuery();
+    
+    const expiresDateTime = formatDateTime(expiresAt);
+    await ctx.editMessageText(`✅ Тестовое блюдо "${state.dishName}" добавлено!\nСрок хранения: до ${expiresDateTime} UTC (${formatTimeUntil(expiresAt)})\n\n🧪 Уведомление придет через 1 минуту!`);
+    await ctx.reply("Тестовое блюдо добавлено!", mainMenu());
     return;
   }
   
