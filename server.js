@@ -386,17 +386,51 @@ bot.action(/^rm_/, async (ctx) => {
 async function checkExpired() {
   const now = new Date().toISOString();
 
-  const { data } = await supabase
+  // Проверяем активные блюда, которые истекли
+  const { data: activeExpired } = await supabase
     .from("dishes")
     .select("id, name, chat_id, expires_at")
     .eq("status", "active")
     .lte("expires_at", now);
 
-  if (!data || data.length === 0) return;
+  if (activeExpired && activeExpired.length > 0) {
+    for (const d of activeExpired) {
+      try {
+        await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
+        await supabase.from("dishes").update({ status: "expired" }).eq("id", d.id);
+        console.log(`[CHECK_EXPIRED] Sent notification for ${d.name} to ${d.chat_id}`);
+      } catch (error) {
+        console.error(`[CHECK_EXPIRED] Error sending to ${d.chat_id}:`, error.message);
+      }
+    }
+  }
 
-  for (const d of data) {
-    await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
-    await supabase.from("dishes").update({ status: "expired" }).eq("id", d.id);
+  // Также проверяем уже истекшие блюда (статус expired), чтобы отправлять повторные уведомления
+  // пока блюдо не списано вручную
+  const { data: expiredDishes } = await supabase
+    .from("dishes")
+    .select("id, name, chat_id, expires_at, updated_at")
+    .eq("status", "expired")
+    .lte("expires_at", now);
+
+  if (expiredDishes && expiredDishes.length > 0) {
+    for (const d of expiredDishes) {
+      // Отправляем уведомление только если прошло больше 1 часа с последнего обновления
+      // чтобы не спамить каждую минуту
+      const lastUpdate = new Date(d.updated_at || d.expires_at);
+      const hoursSinceUpdate = (new Date() - lastUpdate) / (1000 * 60 * 60);
+      
+      if (hoursSinceUpdate >= 1) {
+        try {
+          await bot.telegram.sendMessage(d.chat_id, `❌ Срок истёк: ${d.name}. Требуется списание.`);
+          // Обновляем updated_at чтобы не спамить
+          await supabase.from("dishes").update({ updated_at: new Date().toISOString() }).eq("id", d.id);
+          console.log(`[CHECK_EXPIRED] Sent repeat notification for ${d.name} to ${d.chat_id}`);
+        } catch (error) {
+          console.error(`[CHECK_EXPIRED] Error sending repeat notification to ${d.chat_id}:`, error.message);
+        }
+      }
+    }
   }
 }
 
